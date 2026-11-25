@@ -465,8 +465,9 @@ public class SettingsActivity extends Activity {
     }
 
     /** 更新源默认指向本仓库的 version.json，用户填了别的地址就按用户填的走 */
+    // 用 jsDelivr 而不是 raw.githubusercontent：后者在这台机器上被 reset，前者稳定
     static final String DEFAULT_UPD_URL =
-            "https://raw.githubusercontent.com/hehe15855/DSHGoXpandh/master/version.json";
+            "https://cdn.jsdelivr.net/gh/hehe15855/DSHGoXpandh@master/version.json";
 
     String updUrl() {
         try {
