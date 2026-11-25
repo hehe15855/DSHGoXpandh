@@ -3619,9 +3619,12 @@ public class SettingsActivity extends Activity {
         // root 那一路最准：配置里 enabled=0 就是关掉了，跟进程死活无关。
         boolean probed = lastProbeAt > 0L;
         Boolean rootV = rootVerdict;
-        boolean lspOk = rootV != null
-                ? rootV.booleanValue()
-                : (probed ? lastProbeInjected : (probeCached() || lspActive()));
+        // 登记表可能落后于实际注入（重装、改包名之后尤其常见：modules 表里没有你，但 LSPosed 照样在跑模块）。
+        // 所以登记表说「没有」时，用探针的真实结果兜底 —— 新起的 :probe 进程被注入过，就是活的。
+        long pAge = probeAgeMs();
+        boolean pFresh = pAge >= 0 && pAge < 15 * 60 * 1000L;
+        boolean lspOk = (rootV != null && rootV.booleanValue())
+                || (probed ? lastProbeInjected : (pFresh || probeCached() || lspActive()));
         boolean targetOk = alive.length() > 0;
         boolean connected = lspOk;
         // Root 只是增强：没它 hook 照常跑，少了"直读配置"和"一键开 LSPosed"而已
