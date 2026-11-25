@@ -468,6 +468,19 @@ public class SettingsActivity extends Activity {
     static final String REPO_URL = "https://github.com/hehe15855/DSHGoXpandh";
     static final String RELEASE_URL = REPO_URL + "/releases/latest";
 
+    /** 按点分段比版本号：a>b 返回正数，相等 0，小于负数。非数字字符先剔掉 */
+    int compareVer(String a, String b) {
+        String[] x = (a == null ? "" : a).replaceAll("[^0-9.]", "").split("[.]");
+        String[] y = (b == null ? "" : b).replaceAll("[^0-9.]", "").split("[.]");
+        int n = Math.max(x.length, y.length);
+        for (int i = 0; i < n; i++) {
+            int xi = (i < x.length && x[i].length() > 0) ? Integer.parseInt(x[i]) : 0;
+            int yi = (i < y.length && y[i].length() > 0) ? Integer.parseInt(y[i]) : 0;
+            if (xi != yi) return xi - yi;
+        }
+        return 0;
+    }
+
     /** 用系统浏览器打开链接；没有浏览器就说明白 */
     void openUrl(String url) {
         try {
@@ -481,9 +494,9 @@ public class SettingsActivity extends Activity {
     }
 
     /** 更新源默认指向本仓库的 version.json，用户填了别的地址就按用户填的走 */
-    // 用 jsDelivr 而不是 raw.githubusercontent：后者在这台机器上被 reset，前者稳定
+    // 走 GitHub 官方 API：jsDelivr 的 @master 有 12 小时缓存，发了新版它还在报旧版本
     static final String DEFAULT_UPD_URL =
-            "https://cdn.jsdelivr.net/gh/hehe15855/DSHGoXpandh@master/version.json";
+            "https://api.github.com/repos/hehe15855/DSHGoXpandh/releases/latest";
 
     String updUrl() {
         try {
@@ -515,12 +528,18 @@ public class SettingsActivity extends Activity {
                         while ((k = is.read(buf)) > 0) bo.write(buf, 0, k);
                         is.close();
                         org.json.JSONObject o = new org.json.JSONObject(new String(bo.toByteArray(), "UTF-8"));
+                        // 兼容两种源：自己的 version.json 用 version 字段；GitHub API 用 tag_name
                         String remote = o.optString("version", "");
+                        if (remote.length() == 0) remote = o.optString("tag_name", "");
+                        remote = remote.replaceAll("^[vV]", "").trim();
                         String note = o.optString("note", "");
+                        if (note.length() == 0) note = o.optString("name", "");
                         String cur = versionName();
-                        if (remote.length() == 0) r = "更新源没写 version 字段";
-                        else if (remote.equals(cur)) r = "已是最新（" + cur + "）";
-                        else r = "有新版本 " + remote + "（当前 " + cur + "）" + (note.length() > 0 ? "\n" + note : "");
+                        int cmp = compareVer(remote, cur);
+                        if (remote.length() == 0) r = "这个更新源没有可识别的版本字段";
+                        else if (cmp == 0) r = "已是最新（" + cur + "）";
+                        else if (cmp > 0) r = "有新版本 " + remote + "（当前 " + cur + "）" + (note.length() > 0 ? "\n" + note : "");
+                        else r = "当前 " + cur + " 比发布版 " + remote + " 更新（开发版）";
                     }
                 } catch (Throwable t) {
                     r = "检查失败：" + t.getClass().getSimpleName();
