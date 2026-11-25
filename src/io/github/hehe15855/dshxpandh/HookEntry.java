@@ -32,7 +32,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static final String SELF = "io.github.hehe15855.dshxpandh";
     /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
     private static boolean DEBUG_LOG = false;
-    private static final String VER = "v146";
+    private static final String VER = "v147";
     // 控制目录：DSH 版优先，独立使用则落到通用目录（两者都可用，不需要改代码）
     private static final String ROOT = pickRoot();
     private static String pickRoot() {
