@@ -31,10 +31,10 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 
 ## 怎么接
 
-模块把能力清单和操作说明导出到 `/sdcard/DSH-Output/xhook/`。DSH Go 读到 `DSH-GUIDE.md` 就知道全部接口，然后能自己完成这些事：
+模块把能力清单和操作说明导出到**控制目录**——默认 `/sdcard/xhook/`；如果你本来就有 `/sdcard/DSH-Output/xhook/`，会沿用它；两个都不行退回 `/sdcard/Download/xhook/`。DSH Go 读到 `DSH-GUIDE.md` 就知道全部接口，然后能自己完成这些事：
 
 ```
-「我装了 DSHGoXpandh，接口在 /sdcard/DSH-Output/xhook/，先读 DSH-GUIDE.md」
+「我装了 DSHGoXpandh，接口在 /sdcard/xhook/，先读 DSH-GUIDE.md」
 ```
 
 也自带一个 DSH 插件（`dsh-plugin/`），装上后聊天框上方会出现状态条和面板。
@@ -61,7 +61,7 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 | 无前缀（`value` 列有值） | 明文，WebView 内核的库常见 | 直接读 |
 | `v20` | App-Bound，密钥在系统服务里、绑定应用身份 | 解不开，界面如实说明 |
 
-扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，扫到什么解什么。结果可导出到 `/sdcard/xhook/cookies.json` 交给 DSH Go。
+扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，扫到什么解什么。结果可导出到控制目录下的 `cookies.json` 交给 DSH Go。
 
 几个坑（代码注释里也写着）：
 
@@ -86,8 +86,8 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 | Android | 8.0（API 24）及以上 |
 | LSPosed | API 93+（经典版 / Zygisk 版都可以） |
 | Root | KernelSU / Magisk / APatch（LSPosed 本身就要） |
-| 实测环境 | Android 15 + KernelSU + LSPosed 2.2.1 |
-| 架构 | arm64-v8a（纯 Java，无 native 库，架构无关） |
+| 已验证 | Android 15 + LSPosed 2.2.1；其他版本按上表理论兼容，未逐一验证 |
+| 架构 | 不限（纯 Java，无 native 库） |
 
 ## 安装
 

@@ -2062,7 +2062,7 @@ public class SettingsActivity extends Activity {
             top.put("time", System.currentTimeMillis());
             top.put("count", ckLast.rows.size());
             top.put("items", arr);
-            java.io.File dir = new java.io.File("/sdcard/xhook");
+            java.io.File dir = new java.io.File(CTRL);   // 跟着控制目录走，别写死
             dir.mkdirs();
             java.io.File f = new java.io.File(dir, "cookies.json");
             java.io.FileOutputStream fo = new java.io.FileOutputStream(f);

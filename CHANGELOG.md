@@ -6,11 +6,11 @@
 
 - 直接读浏览器的 Cookies 库并解密，不用插件、不用抓包
 - 三种形态自动分：`v10` 密文解密 / `value` 列明文（WebView 内核）/ `v20` App-Bound 明确报错
-- 扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，本机实测 65 个库
+- 扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，一次扫描实测出 65 个库
 - 按站点分组折叠，每组一个「复制头」，直接得到可用的 `Cookie:` 请求头
 - 脱敏 / 明文一键切换；可导出 `/sdcard/xhook/cookies.json`
 
-实测：本机 Chrome 207 条 cookie 全部解出（0 失败），与参考实现逐字节一致。
+实测：Chrome 库 207 条 cookie 全部解出（0 失败），与参考实现逐字节一致。
 
 ### 修复
 

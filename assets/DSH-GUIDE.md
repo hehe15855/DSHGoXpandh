@@ -2,9 +2,11 @@
 
 ## 你只要说这一句
 
-> 我装了 DSHxpandh 模块，接口在 `/sdcard/DSH-Output/xhook/`，先读 `DSH-GUIDE.md`
+> 我装了 DSHxpandh 模块，接口在 `/sdcard/xhook/`，先读 `DSH-GUIDE.md`
 
 DSH 读完这个文件就知道全部接口，不需要你解释任何细节。
+
+> **路径说明**：控制目录默认是 `/sdcard/xhook/`；如果你本来就有 `/sdcard/DSH-Output/xhook/`，会沿用它；两者都不可用时退回 `/sdcard/Download/xhook/`。本文下面的示例统一写成 `/sdcard/DSH-Output/xhook/`，实际以 App「设置 → 文件」页显示的路径为准。
 
 ## 模块自带 DSH 插件（推荐）
 
