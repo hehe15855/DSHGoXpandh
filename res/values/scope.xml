@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 推荐应用：LSPosed 会给这些包打「推荐应用」标，并在安装/首次启用时默认勾选。
+         收的都是浏览器 —— Cookie 提取和网页 JS 注入都落在这一类上。 -->
     <string-array name="xscope">
         <item>com.heytap.browser</item>
+        <item>com.android.chrome</item>
+        <item>com.quark.browser</item>
+        <item>com.UCMobile</item>
+        <item>com.microsoft.emmx</item>
+        <item>com.tencent.mtt</item>
+        <item>com.android.browser</item>
     </string-array>
 </resources>

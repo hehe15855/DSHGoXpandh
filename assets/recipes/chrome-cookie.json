@@ -1,0 +1,38 @@
+{
+  "process": "main",
+  "sample": 10,
+  "window_ms": 1000,
+  "head": 200,
+  "tail": 800,
+  "max_logs": 2000,
+  "hooks": [
+    {
+      "classes": [
+        "android.webkit.CookieManager"
+      ],
+      "method": "getCookie",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "org.chromium.android_webview.CookieManager"
+      ],
+      "method": "getCookie",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "org.chromium.net.CronetCookieManager"
+      ],
+      "method": "getCookie",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "org.chromium.chrome.browser.cookies.CookiesFetcher"
+      ],
+      "method": "persistCookies",
+      "mode": "log"
+    }
+  ]
+}

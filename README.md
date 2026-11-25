@@ -1,136 +1,148 @@
-# DSHxpandh · Xposed hook 工具箱
+# DSHGoXpandh
 
-装一个模块，给 App 打 **Java 层 hook**：抓明文、改参数、注网页脚本、读 Cookie、调内部方法。
+[![LSPosed](https://img.shields.io/badge/LSPosed-API%2093%2B-blue)](https://github.com/LSPosed/LSPosed)
+[![Android](https://img.shields.io/badge/Android-8.0%2B-green)](https://developer.android.com)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-## 它不是什么
+> 给 [DSH Go](https://github.com/) 做的扩展模块。让手机上的 AI agent 能看见别的 App 在干什么、也能动手改。
 
-- **不是抓包工具** —— 抓不到 TLS 密文。要抓包请用 tcpdump / Charles / mitmproxy。
-- **不做 native 层** —— 用 C/C++ 写的逻辑碰不到，那要 Zygisk 模块。
-- **不需要 root** —— 它是 LSPosed 模块，权限由 LSPosed 提供。
+DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了什么请求、浏览器页面长什么样、某个按钮背后的值是什么。
+
+这个模块补上这一块。它挂在 LSPosed 上，把目标 App 的运行时能力**开一个口子**给 DSH Go：
+
+- DSH Go 说「抓一下这个 App 的请求明文」→ 模块记录方法调用，写到控制目录
+- DSH Go 说「把页面里那个弹窗去掉」→ 模块往 WebView 注入 JS
+- DSH Go 说「换个设备 ID 试试」→ 模块替换返回值
+
+**hook 是手段，让 DSH Go 能干成事才是目的。**
+
+---
+
+## 它给 DSH Go 提供什么
+
+| 能力 | DSH Go 能用来做什么 |
+|---|---|
+| **log** 抓明文 | 看 App 请求的原文、加密前后的内容、API 返回 |
+| **args** 改参数 | 试不同的输入看 App 怎么反应 |
+| **return** 改结果 | 让某个判断成立/不成立，测分支逻辑 |
+| **js** 改网页 | 改页面内容、自动填表、去弹窗、读 DOM |
+| **cookie** 取登录态 | 拿网页 Cookie 做后续请求 |
+| **call** 调方法 | 直接问 App 内部要数据，不用等它自己触发 |
+
+## 怎么接
+
+模块把能力清单和操作说明导出到 `/sdcard/DSH-Output/xhook/`。DSH Go 读到 `DSH-GUIDE.md` 就知道全部接口，然后能自己完成这些事：
+
+```
+「我装了 DSHGoXpandh，接口在 /sdcard/DSH-Output/xhook/，先读 DSH-GUIDE.md」
+```
+
+也自带一个 DSH 插件（`dsh-plugin/`），装上后聊天框上方会出现状态条和面板。
+
+## 网页注入支持三种内核
+
+这是相对同类工具的主要差别——很多模块只支持标准 WebView，遇到自带浏览器就失效。
+
+| 内核 | 常见场景 |
+|---|---|
+| 标准 `android.webkit.WebView` | 大多数 App 内置网页 |
+| 腾讯 XWeb | 微信、QQ |
+| Chromium `AwContents` | OPPO / Chrome / 夸克 / UC 等自带浏览器 |
+
+注入时机是**页面每次重绘 + 每 3 秒兜底**，页面重渲染后效果不会丢。
+
+## 密钥页：Cookie 离线解密
+
+浏览器把登录态存在自己的 SQLite 库里，`encrypted_value` 是 AES-128-CBC 密文。模块的「密钥」页直接读出来解开，不装插件、不抓包。
+
+| 形态 | 含义 | 处理 |
+|---|---|---|
+| `v10` | AES-128-CBC，密钥 PBKDF2-SHA1("peanuts","saltysalt",1) | 解开 |
+| 无前缀（`value` 列有值） | 明文，WebView 内核的库常见 | 直接读 |
+| `v20` | App-Bound，密钥在系统服务里、绑定应用身份 | 解不开，界面如实说明 |
+
+扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，扫到什么解什么。结果可导出到 `/sdcard/xhook/cookies.json` 交给 DSH Go。
+
+几个坑（代码注释里也写着）：
+
+- CBC 的 IV 不对只毁第一块，所以解密用 `NoPadding` 自己剥 PKCS#7；用 `PKCS5Padding` 会在首块错位时抛异常，把能解的值一起丢掉
+- Chrome 130+ 的明文前面垫了 32 字节 `SHA256(host_key)`，要先丢掉再取值
+- 临时库用完即删——里面是活的登录凭证
+
+## 内置脚本
+
+自带 9 个（3 示例 + 6 模板），「自定义」页可单独开关。**改脚本不用重装模块**——改完 3 秒内自动重注入。
+
+## 隐身
+
+默认开启，对目标 App 隐藏 15 类 Java 层特征。
+
+控制目录有开关关掉它——但**诚实的边界**是：只能挡 Java 层探测，native 直接读 `/proc/self/maps`、检查 ART 内存页属性这些，Java 层无能为力。
+
+## 兼容性
+
+| 项 | 要求 |
+|---|---|
+| Android | 8.0（API 24）及以上 |
+| LSPosed | API 93+（经典版 / Zygisk 版都可以） |
+| Root | KernelSU / Magisk / APatch（LSPosed 本身就要） |
+| 实测环境 | Android 15 + KernelSU + LSPosed 2.2.1 |
+| 架构 | arm64-v8a（纯 Java，无 native 库，架构无关） |
 
 ## 安装
 
-1. 先有 Magisk / KernelSU，再装 **LSPosed**
-2. 安装本模块 APK
-3. LSPosed → 模块 → 启用 **DSHxpandh**
-4. 作用域 → 勾选**目标 App**（只勾你要 hook 的那个）
-5. **强制停止目标 App 再打开**（不重启不生效）
+1. 下载 [Releases](../../releases) 里的 APK
+2. 装好后到 **LSPosed 管理器**启用本模块
+3. 勾选要用 DSH Go 操作的目标 App
+4. **重启那个 App**（不是重启手机）
+5. 打开本模块设置页，选配方或写自定义规则
+6. 让 DSH Go 读 `DSH-GUIDE.md` 接管
 
-## 三步用起来
+首次打开会引导授存储权限——不给也能进，但脚本和配方用不了（界面显示「受限模式」）。
 
-```
-① 打开 DSHxpandh → 配方页 → 填目标包名（如 com.example.app）
-② 点一个配方，例如「抓加密明文」
-③ 强制停止目标 App → 打开 → 操作几下 → 去 LSPosed 日志看结果
-```
+## 从源码构建
 
-## 六种模式
+需要 JDK 8+、Android SDK build-tools（`aapt2` / `d8` / `zipalign` / `apksigner`）、以及 LSPosed 的 `xapi.jar`。
 
-| 模式 | 作用 | 典型用途 |
-|---|---|---|
-| `log` | 记下入参和返回值 | **加密**：原文→密文；**解密**：密文→明文（能直接看到解密结果）|
-| `args` | 改入参 | 假装另一台设备、改请求内容 |
-| `return` | 改返回值 | 让某个判断恒真（已开通 / 非会员限制）|
-| `js` | 往 WebView 页面注入脚本 | 改标题、自动填表、去弹窗 |
-| `cookie` | 读 WebView 的 Cookie | 拿网页登录态 |
-| `call` | 主动调静态方法 | 不用等触发，直接取值 |
-
-## 十二个内置配方
-
-| 配方 | 做什么 |
-|---|---|
-| `cipher-log` | 抓 `Cipher` / `Mac` 的**加密前原文和解密后明文** |
-| `fake-ua` | 换 User-Agent |
-| `fake-device-id` | 换设备 ID |
-| `fake-android-id` | 换 Android ID |
-| `fake-location` | 换定位 |
-| `block-su` | 拦 su 调用（防检测）|
-| `block-logs` | 屏蔽刷屏日志 |
-| `log-webview-url` | 记网页加载的地址 |
-| `fake-screen` | 看/改屏幕参数 |
-| `ssl-pinning-off` | 关证书校验（**实验性**，多数 App 无效果）|
-| `crypto-full` | 全链路：`Cipher.update`+`doFinal`、`Mac`、`MessageDigest`、`Signature`、`SecretKeySpec`（看密钥）|
-| `crypto-base64` | 看 `Base64.encodeToString` / `decode` 前后（密文常以 Base64 传输）|
-
-## 让别人用 DSH 接管（可选）
-
-如果对方也用 DSH（AI agent），装完只要说一句：
-
-> 我装了 DSHxpandh 模块，接口在 `/sdcard/DSH-Output/xhook/`，先读 `DSH-GUIDE.md`
-
-DSH 会自己读到：
-
-| 文件 | 内容 |
-|---|---|
-| `capabilities.json` | 全部能力：6 模式 / 12 配方 / 开关 / 9 条限制 |
-| `recipes/*.json` | 每个配方的 hook 配置，可直接 cp 到 `Download/xhook/<包名>.json` |
-| `status.json` | 版本与通道状态 |
-| `mods/` | 系统里装了哪些 Zygisk 模块 |
-
-**这些文件在你第一次打开设置页时自动导出**，不用手动准备。
-
-## 控制目录
-
-模块**自动选**目录，不用你配：
-
-1. `/sdcard/DSH-Output/xhook/` —— 非空就用它（DSH 用户）
-2. `/sdcard/xhook/` —— 否则自己建这个（独立用户）
-
-设置页底部会显示当前用的是哪个。
-
-| 文件 | 作用 |
-|---|---|
-| `off` | 存在即停 JS 注入（删掉恢复）|
-| `stealth` | 存在即对目标 App 隐藏 Xposed 特征 |
-| `classhide` | 存在即隐藏 Xposed 类名 |
-| `abilities/<mode>.off` | 单独关掉某个模式 |
-| `scripts/*.js` | 多脚本，`<名>.js.off` 表示停用 |
-| `cmd.json` | 一次性下发命令 `{"ts":时间戳,"js":"代码"}` |
-
-这些文件**改完即时生效**（1.5–2.5 秒轮询），不用重启。
-
-## 配置格式
-
-放 `/sdcard/Download/xhook/<包名>.json`：
-
-```json
-{
-  "hooks": [
-    { "class": "android.webkit.WebSettings",
-      "method": "getUserAgentString",
-      "mode": "return",
-      "return_value": "MyUA" }
-  ]
-}
+```bash
+export ANDROID_JAR=/path/to/android.jar
+export XAPI_JAR=/path/to/xapi.jar
+bash build.sh
+# 产物：mod_signed.apk
 ```
 
-多个类一起 hook 用 `"classes": ["a.b.C", "a.b.D"]`。
+签名用同目录的 `debug.ks`（不在仓库里，自己放一个）。
 
-## 限制（看清再用）
+## 项目结构
 
-1. **只能动 Java 代码**，C/C++ 写的逻辑碰不到。
-2. **只能 hook 已加载的类**；加壳 / 动态加载的要等它自己加载出来。
-3. **页面不是标准 WebView 的**，`js` 和 `cookie` 用不了。
-4. **只对 LSPosed 勾过作用域的 App 生效**，没勾的进程完全不动。
-5. **改值只影响方法调用**，已编译进底层的逻辑改不了。
-6. 日志有上限：速度看配方的 `sample`/`window_ms`（默认每秒 5 次），总量看 `max_logs`（默认 1000）—— 两者都在配方 json 里，可以自己调。
-7. **改配置后要重启目标 App**；只有控制目录里的开关是热生效的。
-8. 模块痕迹藏不掉，专门的检测工具能发现。
+```
+src/…/HookEntry.java        目标进程里的 hook 逻辑（注入、隐身）
+src/…/SettingsActivity.java 设置界面
+src/…/XhookProvider.java    跨进程配置通道
+src/…/AppPickerDialog.java  应用选择器
+src/…/ProbeService.java     探针服务
+src/…/CookieVault.java      Cookie 解密（v10 / 明文 / v20 检测）
+assets/scripts/             内置脚本
+assets/recipes/             内置配方
+assets/capabilities.json    能力清单（DSH Go 读这个）
+module.prop                 LSPosed / Magisk 模块信息
+CHANGELOG.md                更新日志
+LICENSE                     MIT
+NOTES.md                    开发笔记（踩过的坑）
+```
 
-## 常见问题
+## 开发笔记
 
-**套了配方没效果？**
-→ 90% 是没重启目标 App。强制停止再打开。
+踩过的坑都在 [NOTES.md](NOTES.md)：三种 WebView 内核的差异、Chromium 的 `evaluateJavaScript` 传 null 会崩、隐身为啥必须排除模块自己、LSPosed 的 binder 连接为什么不能靠 killall 重建。
 
-**看不到日志？**
-→ LSPosed 管理器里把日志级别调成 info；模块日志前缀是 `[xhook]`。
+## 免责声明
 
-**LSPosed 里显示「已启用」但没反应？**
-→ 检查作用域勾的是不是目标 App；或者装完模块后 app 路径变了（重装过），需要在 LSPosed 里关掉模块再打开。
+仅供学习研究与自有设备调试使用。请勿用于未授权的设备或违反服务条款的场景。
 
-**某个 App 完全不动？**
-→ 它可能把关键逻辑放在 native 层了，Java hook 够不到。
+## 更新日志
 
-## 版本
+见 [CHANGELOG.md](CHANGELOG.md)。
 
-v4.9 / versionCode 47
+## License
+
+[MIT](LICENSE)

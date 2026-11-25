@@ -103,6 +103,10 @@ public class SettingsActivity extends Activity {
     TextView[] navLbl;
     TextView[] navIco;
     int curTab = 0;
+    /** 页签总数：状态 / 配方 / 自定义 / Root / 设置 / 密钥 */
+    static final int TABS = 6;
+    /** 导航栏显示顺序 → 面板下标。密钥排在状态后面，面板仍是 pr[5] */
+    private final int[] navOrder = { 0, 5, 1, 2, 3, 4 };
     Switch sw;
     EditText ePkg, eCls, eMtd, eMode, eVal;
 
@@ -508,6 +512,28 @@ public class SettingsActivity extends Activity {
                 });
             }
         }).start();
+    }
+
+    /** 调试日志开关：靠控制目录里有没有 debug 这个文件 */
+    boolean debugLogOn() {
+        try { return new File(CTRL, "debug").exists(); } catch (Throwable t) { return false; }
+    }
+
+    void setDebugLog(boolean on) {
+        File f = new File(CTRL, "debug");
+        try {
+            if (on) {
+                File d = new File(CTRL);
+                if (!d.exists()) d.mkdirs();
+                if (!f.exists()) f.createNewFile();
+                toast("调试日志已开启，重启目标 App 后生效");
+            } else {
+                boolean del = f.exists() && f.delete();
+                toast(del ? "已关闭，标记文件已删除" : "已关闭");
+            }
+        } catch (Throwable t) {
+            toast("操作失败：" + t.getClass().getSimpleName());
+        }
     }
 
     /** QUERY_ALL_PACKAGES 是不是有效 */
@@ -1026,9 +1052,9 @@ public class SettingsActivity extends Activity {
         }
 
         FrameLayout fp = new FrameLayout(this);
-        ps = new ScrollView[5];
-        pr = new LinearLayout[5];
-        for (int i = 0; i < 5; i++) {
+        ps = new ScrollView[TABS];
+        pr = new LinearLayout[TABS];
+        for (int i = 0; i < TABS; i++) {
             ScrollView s = new ScrollView(this);
             LinearLayout r = new LinearLayout(this);
             r.setOrientation(LinearLayout.VERTICAL);
@@ -1039,6 +1065,7 @@ public class SettingsActivity extends Activity {
             fp.addView(s);
         }
         try { buildRootPage(pr[3]); } catch (Throwable t) { }
+        try { buildCookiePage(pr[5]); } catch (Throwable t) { }
         LinearLayout root = pr[0];
 
         LinearLayout head = new LinearLayout(this);
@@ -1331,6 +1358,22 @@ public class SettingsActivity extends Activity {
             @Override public void onClick(View v) { checkUpdate(); }
         });
 
+        LinearLayout cD = card(pr[4], "调试日志", "排查问题时打开，平时关着");
+        LinearLayout dRow = row(cD);
+        TextView dLabel = new TextView(this);
+        dLabel.setText("输出模块日志到 logcat");
+        dLabel.setTextSize(14);
+        dLabel.setTextColor(TXT);
+        dRow.addView(dLabel, new LinearLayout.LayoutParams(0, -2, 1f));
+        Switch swD = new Switch(this);
+        swD.setChecked(debugLogOn());
+        swD.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override public void onCheckedChanged(CompoundButton v, boolean checked) { setDebugLog(checked); }
+        });
+        dRow.addView(swD);
+        cD.addView(body("打开后，即使隐身开着也会把 hook 过程写进 logcat（adb logcat | grep core 能看到）。"));
+        cD.addView(body("关闭时会自动删除控制目录里的标记文件，日志立刻恢复静默。"));
+
         LinearLayout cA = card(pr[4], "外观", "背景色跟随系统或自己选");
         LinearLayout seg = row(cA);
         final String[] vals = { "auto", "light", "dark" };
@@ -1582,7 +1625,7 @@ public class SettingsActivity extends Activity {
                     try { t = insets.getSystemWindowInsetTop(); } catch (Throwable e) {}
                     v.setPadding(0, t, 0, 0);
                     if (navRef != null) navRef.setPadding(0, dp(6), 0, dp(8) + b);
-                    for (int k = 0; k < 5; k++) {
+                    for (int k = 0; k < TABS; k++) {
                         if (pr != null && pr[k] != null) pr[k].setPadding(dp(16), dp(6), dp(16), dp(24) + b);
                     }
                     return insets;
@@ -1613,12 +1656,13 @@ public class SettingsActivity extends Activity {
         nav.setOrientation(LinearLayout.HORIZONTAL);
         nav.setBackgroundColor(CHIP);
         nav.setPadding(0, dp(6), 0, dp(8));
-        String[] icons = { "◉", "▤", "✎", "⛭", "⚙" };
-        String[] names = { "状态", "配方", "自定义", "Root", "设置" };
-        navLbl = new TextView[5];
-        navIco = new TextView[5];
-        for (int i = 0; i < 5; i++) {
-            final int idx = i;
+        // 这两个数组的**顺序**就是显示顺序，必须与 navOrder 的映射一致
+        String[] icons = { "◉", "◈", "▤", "✎", "⛭", "⚙" };
+        String[] names = { "状态", "密钥", "配方", "自定义", "Root", "设置" };
+        navLbl = new TextView[TABS];
+        navIco = new TextView[TABS];
+        for (int i = 0; i < TABS; i++) {
+            final int idx = navOrder[i];
             LinearLayout it = new LinearLayout(this);
             it.setOrientation(LinearLayout.VERTICAL);
             it.setGravity(Gravity.CENTER);
@@ -1648,15 +1692,400 @@ public class SettingsActivity extends Activity {
         return nav;
     }
 
+    /* ───────── 密钥页：Cookie 解密 ───────── */
+
+    /** 当前选中的浏览器（CookieVault.BROWSERS 下标） */
+    private int ckPick = 0;
+    private EditText ckHost;
+    private LinearLayout ckOut;
+    private TextView ckTarget;
+    private CookieVault.Result ckLast;
+    /** 列表里显示明文还是脱敏 */
+    private boolean ckPlain = false;
+    /** 已展开的站点（按 host_key 记） */
+    private final java.util.Set<String> ckOpen = new java.util.HashSet<String>();
+    /** 当前可选的库列表：默认内置几个，扫描后换成扫到的全部 */
+    private String[][] ckList = CookieVault.BROWSERS;
+
+    String ckTargetLabel() {
+        if (ckList == null || ckList.length == 0) return "（还没扫到库）";
+        if (ckPick < 0 || ckPick >= ckList.length) ckPick = 0;
+        String[] b = ckList[ckPick];
+        return b[2].equals(b[0]) ? b[0] : (b[2] + " · " + b[0]);
+    }
+
+    void buildCookiePage(LinearLayout root) {
+        pageHead(root, "密钥",
+                "把浏览器自己的 Cookie 读出来、解开。"
+                + "\n三种取值方式自动选：v10 密文解密 / value 列明文 / v20 明确报错。"
+                + "\n离线解密要 Root；不想给 Root，就用下面的运行时抓取。");
+
+        LinearLayout c1 = card(root, "离线解密", "读浏览器数据库自己解", 1);
+        ckTarget = body("目标：" + ckTargetLabel());
+        c1.addView(ckTarget);
+
+        Button bScan = ghost(c1, "扫描本机所有浏览器库");
+        bScan.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { runCookieScan(); }
+        });
+
+        Button bPick = ghost(c1, "换一个库");
+        bPick.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (ckList == null || ckList.length == 0) { toast("先扫一次"); return; }
+                ckPick = (ckPick + 1) % ckList.length;
+                if (ckTarget != null) ckTarget.setText("目标：" + ckTargetLabel());
+            }
+        });
+
+        ckHost = input(c1, "过滤：站点或 cookie 名（即时生效），例如 google.com");
+        ckHost.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
+            @Override public void afterTextChanged(android.text.Editable e) {
+                if (ckLast != null) redrawCookies();
+            }
+        });
+
+        Button go = primary(c1, "拉取并解密");
+        go.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { runCookieHarvest(); }
+        });
+        markRootOnly(go);
+        markRootOnly(bPick);
+        markRootOnly(bScan);
+
+        ckOut = new LinearLayout(this);
+        ckOut.setOrientation(LinearLayout.VERTICAL);
+        ckOut.setPadding(0, dp(6), 0, 0);
+        c1.addView(ckOut);
+
+        LinearLayout c2 = card(root, "运行时抓取", "不用解密 · hook 已装进目标 App");
+        c2.addView(body("登录态在内存里本来就是明文。给目标 App 套一条配方，它自己会吐出来："));
+        c2.addView(body("· 取登录态 —— hook CookieManager.getCookie，拿活 Cookie"));
+        c2.addView(body("· 抓加密明文 —— hook Cipher / Mac，加密前和解密后的原文都记下来"));
+        c2.addView(body("· 全链路加解密 —— 再加 MessageDigest / Base64 / Signature"));
+        Button bRcp = ghost(c2, "去配方页套用");
+        bRcp.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { showTab(1); }
+        });
+
+        LinearLayout c3 = card(root, "解不开的时候", "v20 / App-Bound");
+        c3.addView(body("前缀是 v20，说明密钥由系统服务保管、绑定浏览器自己的身份，磁盘上没有，离线解不开。"));
+        c3.addView(body("这时只有一条路：以它的身份跑代码。模块的 hook 就在它进程里 —— 用上面的运行时抓取，或者 Frida 挂 OSCrypt_DecryptString。"));
+        c3.addView(body("别在这条路上反复试密钥组合：v20 的密钥算不出来，试多少次都是乱码。"));
+    }
+
+    void runCookieScan() {
+        if (ckOut == null) return;
+        ckOut.removeAllViews();
+        ckOut.addView(body("正在扫 /data/data 下的 Cookies 库…"));
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final String[][] hit = CookieVault.discover(new CookieVault.Root() {
+                    @Override public String exec(String cmd, long timeoutMs) { return runRoot(cmd, timeoutMs); }
+                });
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (ckOut == null) return;
+                        ckOut.removeAllViews();
+                        if (hit.length == 0) {
+                            TextView t = body("没扫到。没有 Root，或者这台机器上确实没有 Chromium 系的库。");
+                            t.setTextColor(BAD);
+                            ckOut.addView(t);
+                            return;
+                        }
+                        ckList = hit;
+                        ckPick = 0;
+                        // 扫到一堆库里默认挑 Chrome：那是绝大多数人要抓的那个
+                        for (int i = 0; i < hit.length; i++) {
+                            if ("com.android.chrome".equals(hit[i][0])) { ckPick = i; break; }
+                        }
+                        if (ckTarget != null) ckTarget.setText("目标：" + ckTargetLabel());
+                        ckOut.addView(body("扫到 " + hit.length + " 个库。点「换一个库」切换，或直接解密当前这个："));
+                        for (int i = 0; i < hit.length && i < 20; i++) {
+                            String nm = hit[i][2].equals(hit[i][0]) ? hit[i][0] : (hit[i][2] + "   " + hit[i][0]);
+                            ckOut.addView(body("· " + nm));
+                        }
+                    }
+                });
+            }
+        }, "ck-scan").start();
+    }
+
+    void runCookieHarvest() {
+        if (ckList == null || ckList.length == 0) { toast("先扫描一次"); return; }
+        if (ckPick < 0 || ckPick >= ckList.length) ckPick = 0;
+        final String pkg = ckList[ckPick][0];
+        final String rel = ckList[ckPick][1];
+        final String host = "";   // 一次拉全，过滤放界面里做：改关键词不用重拉库
+        if (ckOut == null) return;
+        ckOut.removeAllViews();
+        ckOut.addView(body("正在拉库并解密（su 可能会弹授权）…"));
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final CookieVault.Result r = CookieVault.harvest(SettingsActivity.this,
+                        new CookieVault.Root() {
+                            @Override public String exec(String cmd, long timeoutMs) { return runRoot(cmd, timeoutMs); }
+                        }, pkg, rel, host);
+                runOnUiThread(new Runnable() {
+                    @Override public void run() { renderCookies(r); }
+                });
+            }
+        }, "ck-harvest").start();
+    }
+
+    /** 按 host 分组，组头可折叠；改关键词只重渲染，不重拉库 */
+    void renderCookies(CookieVault.Result r) {
+        ckLast = r;
+        redrawCookies();
+    }
+
+    void redrawCookies() {
+        if (ckOut == null) return;
+        ckOut.removeAllViews();
+        CookieVault.Result r = ckLast;
+        if (r == null) return;
+        if (!r.ok) {
+            TextView t = body(r.note.length() > 0 ? r.note : "没解出东西");
+            t.setTextColor(BAD);
+            ckOut.addView(t);
+            return;
+        }
+        java.util.List<CookieVault.Row> hit = ckFiltered();
+        String sum = "共 " + r.rows.size() + " 条 · 解出 " + (r.v10 + r.plain)
+                + "（密文 " + r.v10 + " / 明文 " + r.plain + "）";
+        if (r.v20 > 0) sum = sum + " · v20 解不开 " + r.v20;
+        if (r.fail > 0) sum = sum + " · 失败 " + r.fail;
+        TextView st = body(sum);
+        st.setTextColor((r.v20 + r.fail) > 0 ? BAD : ACC);
+        ckOut.addView(st);
+
+        LinearLayout tools = row(ckOut);
+        Button bPlain = ghost(tools, ckPlain ? "明文显示中" : "脱敏显示");
+        LinearLayout.LayoutParams lpT1 = new LinearLayout.LayoutParams(0, dp(42), 1f);
+        lpT1.rightMargin = dp(6);
+        bPlain.setLayoutParams(lpT1);
+        bPlain.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                ckPlain = !ckPlain;
+                redrawCookies();
+            }
+        });
+        Button bEx = ghost(tools, "导出 JSON");
+        bEx.setLayoutParams(new LinearLayout.LayoutParams(0, dp(42), 1f));
+        bEx.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { exportCookies(); }
+        });
+
+        if (hit.isEmpty()) {
+            ckOut.addView(body(r.rows.isEmpty() ? "这个库里没有记录" : "没有匹配的 cookie"));
+            return;
+        }
+        // 按 host 归组，保持库里原有顺序
+        final java.util.Map<String, java.util.List<CookieVault.Row>> groups =
+                new java.util.LinkedHashMap<String, java.util.List<CookieVault.Row>>();
+        for (int i = 0; i < hit.size(); i++) {
+            CookieVault.Row one = hit.get(i);
+            java.util.List<CookieVault.Row> bucket = groups.get(one.host);
+            if (bucket == null) {
+                bucket = new java.util.ArrayList<CookieVault.Row>();
+                groups.put(one.host, bucket);
+            }
+            bucket.add(one);
+        }
+        boolean single = groups.size() == 1;
+        java.util.Iterator<String> it = groups.keySet().iterator();
+        while (it.hasNext()) {
+            final String host = it.next();
+            final java.util.List<CookieVault.Row> bucket = groups.get(host);
+            boolean open = single || ckOpen.contains(host);
+            ckOut.addView(hostHeader(host, bucket, open));
+            if (!open) continue;
+            for (int i = 0; i < bucket.size(); i++) ckOut.addView(cookieItem(bucket.get(i)));
+        }
+    }
+
+    java.util.List<CookieVault.Row> ckFiltered() {
+        java.util.List<CookieVault.Row> out = new java.util.ArrayList<CookieVault.Row>();
+        if (ckLast == null) return out;
+        String q = ckHost == null ? "" : ckHost.getText().toString().trim().toLowerCase();
+        for (int i = 0; i < ckLast.rows.size(); i++) {
+            CookieVault.Row one = ckLast.rows.get(i);
+            if (q.length() == 0) { out.add(one); continue; }
+            String h = one.host == null ? "" : one.host.toLowerCase();
+            String n = one.name == null ? "" : one.name.toLowerCase();
+            if (h.contains(q) || n.contains(q)) out.add(one);
+        }
+        return out;
+    }
+
+    /** 一个站点的组头：点开/收起，右边一键复制整条 Cookie 请求头 */
+    View hostHeader(final String host, final java.util.List<CookieVault.Row> bucket, final boolean open) {
+        LinearLayout holder = new LinearLayout(this);
+        holder.setOrientation(LinearLayout.HORIZONTAL);
+        holder.setGravity(Gravity.CENTER_VERTICAL);
+        holder.setPadding(dp(6), dp(10), dp(6), dp(10));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(4);
+        holder.setLayoutParams(lp);
+
+        TextView arrow = new TextView(this);
+        arrow.setText(open ? "▾" : "▸");
+        arrow.setTextSize(12);
+        arrow.setTextColor(ACC);
+        arrow.setPadding(0, 0, dp(8), 0);
+        holder.addView(arrow);
+
+        TextView label = new TextView(this);
+        label.setText(host.length() == 0 ? "（无站点）" : host);
+        label.setTextSize(12);
+        label.setTextColor(TXT);
+        label.setTypeface(Typeface.DEFAULT_BOLD);
+        holder.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+
+        int usable = 0;
+        for (int i = 0; i < bucket.size(); i++) if (bucket.get(i).value.length() > 0) usable++;
+        TextView cnt = new TextView(this);
+        cnt.setText(bucket.size() + " 条" + (usable < bucket.size() ? " / 可用 " + usable : ""));
+        cnt.setTextSize(10);
+        cnt.setTextColor(usable == 0 ? BAD : SUB);
+        holder.addView(cnt);
+
+        if (usable > 0) {
+            TextView cp = new TextView(this);
+            cp.setText("复制头");
+            cp.setTextSize(11);
+            cp.setTextColor(ACC);
+            cp.setPadding(dp(10), 0, 0, 0);
+            cp.setOnClickListener(new View.OnClickListener() {
+                @Override public void onClick(View v) { copyCookieHeader(host, bucket); }
+            });
+            holder.addView(cp);
+        }
+
+        holder.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (ckOpen.contains(host)) ckOpen.remove(host);
+                else ckOpen.add(host);
+                redrawCookies();
+            }
+        });
+        return holder;
+    }
+
+    /** 拼成一条 Cookie 请求头，拿去就能直接 curl */
+    void copyCookieHeader(String host, java.util.List<CookieVault.Row> bucket) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < bucket.size(); i++) {
+            CookieVault.Row one = bucket.get(i);
+            if (one.value.length() == 0) continue;
+            if (sb.length() > 0) sb.append("; ");
+            sb.append(one.name).append('=').append(one.value);
+        }
+        if (sb.length() == 0) { toast("这一组没有可用的值"); return; }
+        copyText(sb.toString(), host + " 的 Cookie 头（" + sb.length() + " 字符）");
+    }
+
+    View cookieItem(final CookieVault.Row r) {
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setPadding(dp(10), dp(8), dp(10), dp(8));
+        item.setBackgroundDrawable(box(CARD, LINE, 8));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+        lp.topMargin = dp(6);
+        item.setLayoutParams(lp);
+
+        LinearLayout head = new LinearLayout(this);
+        head.setOrientation(LinearLayout.HORIZONTAL);
+        head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView nm = new TextView(this);
+        nm.setText(r.name);
+        nm.setTextSize(12);
+        nm.setTextColor(TXT);
+        nm.setTypeface(Typeface.DEFAULT_BOLD);
+        head.addView(nm, new LinearLayout.LayoutParams(0, -2, 1f));
+        TextView how = new TextView(this);
+        how.setText(r.how);
+        how.setTextSize(10);
+        how.setTextColor(("v20".equals(r.how) || "fail".equals(r.how)) ? BAD : ACC);
+        head.addView(how);
+        item.addView(head);
+
+        TextView tvHost = new TextView(this);
+        tvHost.setText(r.host);
+        tvHost.setTextSize(10);
+        tvHost.setTextColor(SUB);
+        item.addView(tvHost);
+
+        TextView val = new TextView(this);
+        val.setText(r.value.length() == 0 ? "（空）" : (ckPlain ? r.value : CookieVault.mask(r.value)));
+        val.setTextSize(11);
+        val.setTextColor(SUB);
+        val.setTypeface(Typeface.MONOSPACE);
+        item.addView(val);
+
+        item.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (r.value.length() == 0) copyText(r.host + "\t" + r.name, "主机与名称");
+                else copyText(r.value, r.name);
+            }
+        });
+        return item;
+    }
+
+    void copyText(String s, String what) {
+        try {
+            android.content.ClipboardManager c =
+                    (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+            c.setPrimaryClip(android.content.ClipData.newPlainText("xhook", s));
+            toast(what + " 已复制");
+        } catch (Throwable t) { toast("复制失败"); }
+    }
+
+    void exportCookies() {
+        if (ckLast == null) return;
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (int i = 0; i < ckLast.rows.size(); i++) {
+                CookieVault.Row r = ckLast.rows.get(i);
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("host", r.host);
+                o.put("name", r.name);
+                o.put("how", r.how);
+                o.put("value", r.value);
+                arr.put(o);
+            }
+            org.json.JSONObject top = new org.json.JSONObject();
+            top.put("package", ckList[ckPick][0]);
+            top.put("cookieRel", ckList[ckPick][1]);
+            top.put("time", System.currentTimeMillis());
+            top.put("count", ckLast.rows.size());
+            top.put("items", arr);
+            java.io.File dir = new java.io.File("/sdcard/xhook");
+            dir.mkdirs();
+            java.io.File f = new java.io.File(dir, "cookies.json");
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(f);
+            fo.write(top.toString(1).getBytes("UTF-8"));
+            fo.close();
+            toast("已写到 " + f.getAbsolutePath());
+        } catch (Throwable t) {
+            toast("导出失败：" + t.getClass().getSimpleName());
+        }
+    }
+
     void showTab(int i) {
         curTab = i;
-        for (int k = 0; k < 5; k++) {
+        for (int k = 0; k < TABS; k++) {
             if (ps != null && ps[k] != null) ps[k].setVisibility(k == i ? View.VISIBLE : View.GONE);
+        }
+        for (int k = 0; k < TABS; k++) {
+            boolean on = navOrder[k] == i;
             if (navLbl != null && navLbl[k] != null) {
-                navLbl[k].setTextColor(k == i ? ACC : SUB);
-                navLbl[k].setTypeface(k == i ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+                navLbl[k].setTextColor(on ? ACC : SUB);
+                navLbl[k].setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
             }
-            if (navIco != null && navIco[k] != null) navIco[k].setTextColor(k == i ? ACC : SUB);
+            if (navIco != null && navIco[k] != null) navIco[k].setTextColor(on ? ACC : SUB);
         }
     }
 

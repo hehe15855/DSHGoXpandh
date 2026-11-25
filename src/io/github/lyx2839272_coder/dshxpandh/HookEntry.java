@@ -30,7 +30,9 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static final String TAG = "core";
     /** 本模块自己的包名：隐身 hook 必须排除它，否则会挡住自己的 su / 文件读取。改包名时只改这里。 */
     private static final String SELF = "io.github.lyx2839272_coder.dshxpandh";
-    private static final String VER = "v142";
+    /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
+    private static boolean DEBUG_LOG = false;
+    private static final String VER = "v146";
     // 控制目录：DSH 版优先，独立使用则落到通用目录（两者都可用，不需要改代码）
     private static final String ROOT = pickRoot();
     private static String pickRoot() {
@@ -305,6 +307,11 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     }
 
     private static boolean stealthOn() {
+        // 调试日志开关走文件：控制目录里有 debug 这个文件就输出日志。
+        // 不走 prefs —— XSharedPreferences 在目标进程读不到（apexdata 路径），provider 也可能失败。
+        try {
+            DEBUG_LOG = new File(ROOT + "/debug").exists();
+        } catch (Throwable t) { }
         Boolean xv = xspBool("stealth");
         if (xv != null) return xv.booleanValue();
         try {
@@ -1360,7 +1367,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static volatile boolean SILENT = false;
 
     private static void emit(String pkg, String msg) {
-        if (SILENT) return;
+        // DEBUG_LOG 优先于隐身静默：排查时把 debugLog 打开，隐身开着也能看日志
+        if (SILENT && !DEBUG_LOG) return;
         int left = LEFT.decrementAndGet();
         if (left < 0) return;
         if (left == 0) {

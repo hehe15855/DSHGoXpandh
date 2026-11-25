@@ -1,0 +1,24 @@
+{
+  "process": "main",
+  "sample": 20,
+  "window_ms": 1000,
+  "head": 80,
+  "tail": 500,
+  "max_logs": 3000,
+  "hooks": [
+    {
+      "classes": [
+        "org.chromium.chrome.browser.cookies.CanonicalCookie"
+      ],
+      "method": "toString",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "org.chromium.chrome.browser.cookies.CanonicalCookie"
+      ],
+      "method": "getValue",
+      "mode": "log"
+    }
+  ]
+}
