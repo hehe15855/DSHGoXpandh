@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.github.lyx2839272_coder.dshxpandh"
+    package="io.github.hehe15855.dshxpandh"
     android:versionCode="146"
     android:versionName="12.8.6">
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
@@ -21,7 +21,7 @@
         <meta-data android:name="xposeddescription" android:value="运行时可开关的 hook 框架：日志/改值/注入网页 JS"/>
         <meta-data android:name="xposedminversion" android:value="93"/>
         <meta-data android:name="xposedscope" android:resource="@array/xscope"/>
-        <meta-data android:name="io.github.libxposed.service.XposedProvider" android:value="io.github.lyx2839272_coder.dshxpandh.HookEntry"/>
+        <meta-data android:name="io.github.libxposed.service.XposedProvider" android:value="io.github.hehe15855.dshxpandh.HookEntry"/>
         <activity android:name=".SettingsActivity" android:exported="true" android:label="DSHxpandh" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
@@ -34,7 +34,7 @@
              不设 readPermission —— 目标 App 用的是它自己的 uid，拿不到本模块的 signature 权限 -->
         <provider
             android:name=".XhookProvider"
-            android:authorities="io.github.lyx2839272_coder.dshxpandh.cfg"
+            android:authorities="io.github.hehe15855.dshxpandh.cfg"
             android:exported="true"
             android:enabled="true"/>
     </application>

@@ -226,7 +226,7 @@ pm install -r /data/adb/modules/zygisk_lsposed/manager.apk
 | `src/.../HookEntry.java` | `private static final String SELF = "你的包名"` |
 | `src/.../XhookProvider.java` | `AUTHORITY = "你的包名.cfg"` |
 
-另外还要把源码目录 `src/io/github/lyx2839272_coder/dshxpandh/` 改成对应路径，四个 `.java` 的 `package` 声明跟着改。
+另外还要把源码目录（`src/<把包名的点换成斜杠>/`）一起移过去，所有 `.java` 的 `package` 声明跟着改。
 
 **不用改的**：
 - `build.sh` —— 它从 Manifest 读包名，`xposed_init` 自动跟随

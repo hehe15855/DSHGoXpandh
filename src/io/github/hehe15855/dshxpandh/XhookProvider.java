@@ -1,4 +1,4 @@
-package io.github.lyx2839272_coder.dshxpandh;
+package io.github.hehe15855.dshxpandh;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -18,7 +18,7 @@ import android.os.Bundle;
  * 这与 luckyTool / 超星模块的做法一致（两者 /sdcard 命中数都是 0）。
  */
 public class XhookProvider extends ContentProvider {
-    public static final String AUTHORITY = "io.github.lyx2839272_coder.dshxpandh.cfg";
+    public static final String AUTHORITY = "io.github.hehe15855.dshxpandh.cfg";
     public static final String URI_STR = "content://" + AUTHORITY;
     public static final String PREFS = "xhook";
 

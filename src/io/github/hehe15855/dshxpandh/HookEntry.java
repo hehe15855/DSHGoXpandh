@@ -1,4 +1,4 @@
-package io.github.lyx2839272_coder.dshxpandh;
+package io.github.hehe15855.dshxpandh;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.IXposedHookZygoteInit;
@@ -29,7 +29,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
 
     private static final String TAG = "core";
     /** 本模块自己的包名：隐身 hook 必须排除它，否则会挡住自己的 su / 文件读取。改包名时只改这里。 */
-    private static final String SELF = "io.github.lyx2839272_coder.dshxpandh";
+    private static final String SELF = "io.github.hehe15855.dshxpandh";
     /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
     private static boolean DEBUG_LOG = false;
     private static final String VER = "v146";
