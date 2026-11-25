@@ -4,7 +4,7 @@
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green)](https://developer.android.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-> 给 [DSH Go](https://github.com/) 做的扩展模块。让手机上的 AI agent 能看见别的 App 在干什么、也能动手改。
+> 给 DSH Go 做的扩展模块。DSH Go 是跑在手机里的 agent，这个模块给它在别的 App 里开一扇窗：能看见 App 内部发生了什么，也能动手改。
 
 DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了什么请求、浏览器页面长什么样、某个按钮背后的值是什么。
 
