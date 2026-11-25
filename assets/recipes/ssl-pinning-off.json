@@ -1,0 +1,26 @@
+{
+  "process": "main",
+  "sample": 1,
+  "window_ms": 1000,
+  "head": 200,
+  "tail": 100,
+  "max_logs": 1000,
+  "hooks": [
+    {
+      "classes": [
+        "javax.net.ssl.X509TrustManager"
+      ],
+      "method": "checkServerTrusted",
+      "mode": "return",
+      "return_value": null
+    },
+    {
+      "classes": [
+        "javax.net.ssl.X509TrustManager"
+      ],
+      "method": "checkClientTrusted",
+      "mode": "return",
+      "return_value": null
+    }
+  ]
+}

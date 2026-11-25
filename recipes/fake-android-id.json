@@ -1,0 +1,20 @@
+{
+  "process": "main",
+  "sample": 2,
+  "window_ms": 1000,
+  "head": 100,
+  "tail": 50,
+  "max_logs": 100,
+  "hooks": [
+    {
+      "class": "android.provider.Settings$Secure",
+      "method": "getString",
+      "mode": "return",
+      "when": {
+        "i": 1,
+        "contains": "android_id"
+      },
+      "return_value": "0000000000000000"
+    }
+  ]
+}

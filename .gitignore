@@ -1,0 +1,23 @@
+# 构建产物
+base.apk
+mod.apk
+mod_al.apk
+mod_signed.apk
+mod_signed.apk.idsig
+classes/
+dexout/
+res.zip
+srcs.txt
+cls.txt
+dist/
+
+# 签名密钥 —— 绝对不能上传
+debug.ks
+*.keystore
+*.jks
+*.ks
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+*.swp

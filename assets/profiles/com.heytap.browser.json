@@ -1,0 +1,11 @@
+{
+  "process": "main",
+  "sample": 2,
+  "window_ms": 1000,
+  "head": 300,
+  "tail": 300,
+  "max_logs": 600,
+  "hooks": [
+    {"classes": ["javax.crypto.Cipher", "javax.crypto.Mac"], "method": "doFinal"}
+  ]
+}

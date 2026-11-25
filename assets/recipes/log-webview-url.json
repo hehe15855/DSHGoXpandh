@@ -1,0 +1,24 @@
+{
+  "process": "main",
+  "sample": 2,
+  "window_ms": 1000,
+  "head": 300,
+  "tail": 100,
+  "max_logs": 1000,
+  "hooks": [
+    {
+      "classes": [
+        "android.webkit.WebView"
+      ],
+      "method": "loadUrl",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "android.webkit.WebView"
+      ],
+      "method": "loadDataWithBaseURL",
+      "mode": "log"
+    }
+  ]
+}

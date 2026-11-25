@@ -1,0 +1,15 @@
+{
+  "process": "main",
+  "sample": 1,
+  "window_ms": 1000,
+  "head": 200,
+  "tail": 100,
+  "max_logs": 1000,
+  "hooks": [
+    {
+      "class": "android.util.DisplayMetrics",
+      "method": "toString",
+      "mode": "log"
+    }
+  ]
+}

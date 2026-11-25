@@ -1,0 +1,16 @@
+{
+  "process": "main",
+  "sample": 1,
+  "window_ms": 1000,
+  "head": 60,
+  "tail": 20,
+  "max_logs": 50,
+  "hooks": [
+    {
+      "class": "android.util.Log",
+      "method": "isLoggable",
+      "mode": "return",
+      "return_value": "false"
+    }
+  ]
+}

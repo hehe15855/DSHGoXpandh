@@ -1,0 +1,16 @@
+{
+  "process": "main",
+  "sample": 2,
+  "window_ms": 1000,
+  "head": 300,
+  "tail": 100,
+  "max_logs": 200,
+  "hooks": [
+    {
+      "class": "android.webkit.WebSettings",
+      "method": "getUserAgentString",
+      "mode": "return",
+      "return_value": "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/157.0 Mobile Safari/537.36"
+    }
+  ]
+}

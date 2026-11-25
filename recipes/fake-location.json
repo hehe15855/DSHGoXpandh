@@ -1,0 +1,22 @@
+{
+  "process": "main",
+  "sample": 2,
+  "window_ms": 1000,
+  "head": 100,
+  "tail": 100,
+  "max_logs": 200,
+  "hooks": [
+    {
+      "class": "android.location.Location",
+      "method": "getLatitude",
+      "mode": "return",
+      "return_value": "39.9042"
+    },
+    {
+      "class": "android.location.Location",
+      "method": "getLongitude",
+      "mode": "return",
+      "return_value": "116.4074"
+    }
+  ]
+}

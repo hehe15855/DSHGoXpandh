@@ -1,0 +1,66 @@
+{
+  "process": "main",
+  "sample": 5,
+  "window_ms": 1000,
+  "head": 300,
+  "tail": 200,
+  "max_logs": 1000,
+  "hooks": [
+    {
+      "classes": [
+        "javax.crypto.Cipher"
+      ],
+      "method": "doFinal",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "javax.crypto.Cipher"
+      ],
+      "method": "update",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "javax.crypto.Mac"
+      ],
+      "method": "doFinal",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "javax.crypto.Mac"
+      ],
+      "method": "update",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "java.security.MessageDigest"
+      ],
+      "method": "digest",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "java.security.MessageDigest"
+      ],
+      "method": "update",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "java.security.Signature"
+      ],
+      "method": "sign",
+      "mode": "log"
+    },
+    {
+      "classes": [
+        "javax.crypto.SecretKeySpec"
+      ],
+      "method": "<init>",
+      "mode": "log"
+    }
+  ]
+}

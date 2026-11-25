@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.lyx2839272_coder.dshxpandh"
+    android:versionCode="142"
+    android:versionName="12.8.2">
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <!-- 配方页的「从已安装应用里选」要列出全部应用；不声明的话 Android 11+ 只能看到上面 queries 里的那几个 -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+    <!-- Android 11+ 的包可见性：LSPosed 管理器住在 com.android.shell 里，不声明就拉不起来 -->
+    <queries>
+        <package android:name="com.android.shell"/>
+        <!-- KernelSU 系管理器：LSPosed 就挂在它的模块列表里，这是普通 App 唯一拉得起的入口 -->
+        <package android:name="com.sukisu.nova"/>
+        <package android:name="me.weishu.kernelsu"/>
+        <package android:name="com.topjohnwu.magisk"/>
+    </queries>
+    <application android:label="DSHGoXpandh" android:hasCode="true">
+        <meta-data android:name="xposedmodule" android:value="true"/>
+        <meta-data android:name="xposeddescription" android:value="运行时可开关的 hook 框架：日志/改值/注入网页 JS"/>
+        <meta-data android:name="xposedminversion" android:value="93"/>
+        <meta-data android:name="xposedscope" android:resource="@array/xscope"/>
+        <meta-data android:name="io.github.libxposed.service.XposedProvider" android:value="io.github.lyx2839272_coder.dshxpandh.HookEntry"/>
+        <activity android:name=".SettingsActivity" android:exported="true" android:label="DSHxpandh" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+        <!-- 注入探针：独立进程跑一次，用「它会不会被注入」回答模块是否启用 -->
+        <service android:name=".ProbeService" android:process=":probe" android:exported="false"/>
+        <!-- 配置跨进程通道：目标进程过来读配置，不走 /sdcard。
+             不设 readPermission —— 目标 App 用的是它自己的 uid，拿不到本模块的 signature 权限 -->
+        <provider
+            android:name=".XhookProvider"
+            android:authorities="io.github.lyx2839272_coder.dshxpandh.cfg"
+            android:exported="true"
+            android:enabled="true"/>
+    </application>
+</manifest>

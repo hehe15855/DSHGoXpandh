@@ -1,0 +1,25 @@
+{
+  "process": "all",
+  "sample": 3,
+  "window_ms": 1000,
+  "head": 200,
+  "tail": 100,
+  "max_logs": 200,
+  "hooks": [
+    {
+      "class": "java.lang.Runtime",
+      "method": "exec",
+      "mode": "args",
+      "when": {
+        "i": 0,
+        "contains": "su"
+      },
+      "set": [
+        {
+          "i": 0,
+          "v": "echo blocked"
+        }
+      ]
+    }
+  ]
+}

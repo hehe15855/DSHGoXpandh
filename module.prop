@@ -1,0 +1,6 @@
+id=io.github.lyx2839272_coder.dshxpandh
+name=DSHGoXpandh
+version=v12.8.2
+versionCode=142
+author=lyx2839272-coder
+description=LSPosed 运行时 hook 工具箱：抓明文、改参数、改返回值、注入网页 JS、读 Cookie、调内部方法。支持标准 WebView / 腾讯 XWeb / Chromium 三种内核，带 Java 层隐身。

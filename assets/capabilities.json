@@ -1,0 +1,278 @@
+{
+  "module": "DSHxpandh",
+  "version": "4.8",
+  "manifestVersion": 1,
+  "summary": "给 App 打 Java 层 hook。抓明文、改参数、改返回值、注网页脚本、读 Cookie、调内部方法。不碰 native，不需要 root。",
+  "modes": [
+    {
+      "id": "log",
+      "name": "抓明文",
+      "when": "把加密前的原话、解密后的明文都记下来",
+      "needs": [
+        "类名",
+        "方法名"
+      ],
+      "effect": "日志里出现入参与返回值",
+      "limit": "只对 Java 方法有效",
+      "detail": [
+        "加密方向：入参是原文 → 返回值是密文",
+        "解密方向：入参是密文 → 返回值是明文（能直接看到解密结果）",
+        "另外记：哈希值、Base64 前后、签名、密钥",
+        "盯着的地方：Cipher / Mac / MessageDigest / Signature / Base64 / URLEncoder",
+        "每次记前后 300 字节，超了截断"
+      ]
+    },
+    {
+      "id": "args",
+      "name": "改参数",
+      "when": "让它发出你指定的值",
+      "needs": [
+        "类名",
+        "方法名",
+        "参数位或匹配词"
+      ],
+      "effect": "目标方法收到的入参被替换",
+      "limit": "参数类型要匹配",
+      "detail": [
+        "改方法收到的值：可以指定第几个参数，或匹配到关键词才改"
+      ]
+    },
+    {
+      "id": "return",
+      "name": "改结果",
+      "when": "让判断固定成立",
+      "needs": [
+        "类名",
+        "方法名",
+        "返回值"
+      ],
+      "effect": "目标方法固定返回你的值",
+      "limit": "void 方法无效果",
+      "detail": [
+        "让方法固定返回你要的值，例如 isVip() 恒 true"
+      ]
+    },
+    {
+      "id": "js",
+      "name": "改网页",
+      "when": "往页面里塞脚本",
+      "needs": [
+        "目标 App 已在 LSPosed 作用域里"
+      ],
+      "effect": "页面里执行你的 JS",
+      "limit": "只对 WebView 页面有效（原生界面改不了）；受总闸控制",
+      "detail": [
+        "三种内核都支持：标准 android.webkit.WebView / 腾讯 XWeb / Chromium(AwContents)",
+        "注入时机：页面每次重绘 + 每 3 秒兜底一次",
+        "同一个脚本会被重复执行，所以要写成幂等的（给元素加 id、用 MutationObserver 保活、别用一次性 alert）"
+      ]
+    },
+    {
+      "id": "cookie",
+      "name": "取登录态",
+      "when": "拿到网页的 Cookie",
+      "needs": [
+        "目标 App 有 WebView",
+        "已加载页面"
+      ],
+      "effect": "读出 cookie 字符串",
+      "limit": "同上",
+      "detail": [
+        "读 WebView 的 Cookie，把网页登录态拿出来"
+      ]
+    },
+    {
+      "id": "call",
+      "name": "调方法",
+      "when": "直接调 App 内部方法",
+      "needs": [
+        "类名",
+        "方法名",
+        "参数"
+      ],
+      "effect": "立即执行并返回结果",
+      "limit": "只支持静态方法",
+      "detail": [
+        "主动调目标 App 的静态方法，直接取值"
+      ]
+    }
+  ],
+  "recipes": [
+    {
+      "id": "cipher-log",
+      "name": "抓加密明文",
+      "when": "App 有加密请求，想看明文",
+      "asset": "recipes/cipher-log.json",
+      "covers": [
+        "javax.crypto.Cipher",
+        "javax.crypto.Mac"
+      ]
+    },
+    {
+      "id": "fake-ua",
+      "name": "换 User-Agent",
+      "when": "要让网页以为是别的浏览器/设备",
+      "asset": "recipes/fake-ua.json",
+      "covers": [
+        "android.webkit.WebSettings.getUserAgentString"
+      ]
+    },
+    {
+      "id": "fake-device-id",
+      "name": "换设备 ID",
+      "when": "App 按设备 ID 限制或风控",
+      "asset": "recipes/fake-device-id.json",
+      "covers": [
+        "TelephonyManager.getDeviceId"
+      ]
+    },
+    {
+      "id": "fake-android-id",
+      "name": "换 Android ID",
+      "when": "App 用 ANDROID_ID 做标识",
+      "asset": "recipes/fake-android-id.json",
+      "covers": [
+        "Settings.Secure.ANDROID_ID"
+      ]
+    },
+    {
+      "id": "fake-location",
+      "name": "换定位",
+      "when": "要骗过基于位置的判断",
+      "asset": "recipes/fake-location.json",
+      "covers": [
+        "LocationManager",
+        "Location.getLatitude/Longitude"
+      ]
+    },
+    {
+      "id": "block-su",
+      "name": "拦 su 调用",
+      "when": "App 检测 root，要让它查不到 su",
+      "asset": "recipes/block-su.json",
+      "covers": [
+        "Runtime.exec",
+        "ProcessBuilder"
+      ]
+    },
+    {
+      "id": "block-logs",
+      "name": "屏蔽日志",
+      "when": "App 日志刷屏干扰观察",
+      "asset": "recipes/block-logs.json",
+      "covers": [
+        "android.util.Log"
+      ]
+    },
+    {
+      "id": "log-webview-url",
+      "name": "记网页加载地址",
+      "when": "要知道 App 打开了哪些网页",
+      "asset": "recipes/log-webview-url.json",
+      "covers": [
+        "WebView.loadUrl",
+        "loadDataWithBaseURL"
+      ]
+    },
+    {
+      "id": "fake-screen",
+      "name": "看屏幕参数",
+      "when": "要确认 App 读到的屏幕尺寸/密度",
+      "asset": "recipes/fake-screen.json",
+      "covers": [
+        "DisplayMetrics"
+      ]
+    },
+    {
+      "id": "ssl-pinning-off",
+      "name": "关证书校验",
+      "when": "要抓 HTTPS 包但 App 有证书绑定",
+      "asset": "recipes/ssl-pinning-off.json",
+      "covers": [
+        "X509TrustManager"
+      ],
+      "note": "实验性：多数 App 用 OkHttp 的 CertificatePinner，本配方无效"
+    },
+    {
+      "id": "crypto-full",
+      "name": "全链路加解密",
+      "when": "要看完整加解密过程（update+doFinal+哈希+签名+密钥）",
+      "asset": "recipes/crypto-full.json",
+      "covers": [
+        "Cipher",
+        "Mac",
+        "MessageDigest",
+        "Signature",
+        "SecretKeySpec"
+      ],
+      "note": "日志量大，已用 sample 限流"
+    },
+    {
+      "id": "crypto-base64",
+      "name": "看 Base64 编解码",
+      "when": "密文常以 Base64 传输，要看编解码前后",
+      "asset": "recipes/crypto-base64.json",
+      "covers": [
+        "android.util.Base64"
+      ]
+    }
+  ],
+  "switches": [
+    {
+      "file": "off",
+      "when": "存在即停 JS 注入与命令下发",
+      "hot": true
+    },
+    {
+      "file": "stealth",
+      "when": "存在即对目标进程隐藏 Xposed 特征",
+      "hot": true
+    },
+    {
+      "file": "classhide",
+      "when": "存在即隐藏 Xposed 类名",
+      "hot": true
+    },
+    {
+      "dir": "abilities",
+      "when": "abilities/<mode>.off 单独关掉某个模式",
+      "hot": true
+    },
+    {
+      "dir": "scripts",
+      "when": "scripts/*.js 多脚本，<名>.js.off 停用",
+      "hot": true
+    },
+    {
+      "file": "cmd.json",
+      "when": "一次性下发命令 {ts, js}",
+      "hot": true
+    }
+  ],
+  "requires": {
+    "framework": "LSPosed（Magisk / KernelSU 之上）",
+    "root": false,
+    "scope": "在 LSPosed 里勾选目标 App",
+    "restart": "改配置后需重启目标 App；只有控制目录开关是热生效"
+  },
+  "limits": [
+    "只能动 Java 代码，C / C++ 写的底层逻辑碰不到。",
+    "加壳或动态加载的类，要等它加载出来才能挂；混淆过的类名要自己找。",
+    "不是 WebView 渲染的页面（原生界面、Flutter、Canvas 游戏）改不了；三种 WebView 内核都支持。",
+    "只对 LSPosed 勾选过的 App 生效，没勾的进程完全不动。",
+    "改值只影响方法调用，已经编译进底层代码的逻辑改不了。",
+    "日志有上限：速度由每个配方的 sample/window_ms 决定（默认每秒 5 次），总量由 max_logs 决定（默认 1000 条）—— 两者都能在配方 json 里改。",
+    "关掉通道只停止下发；已经挂上的要重启目标 App 才清得掉。",
+    "模块痕迹藏不掉，专门的检测工具能发现。",
+    "不提权、不改系统设置，只做进程内的运行时替换。"
+  ],
+  "ui": {
+    "channelTitle": "注入通道",
+    "channelSub": "只管「往网页塞东西」这一路，跟 App 里的 hook 无关",
+    "switchLabel": "指令脚本开关",
+    "switchOn": "已开启",
+    "switchOff": "已关闭",
+    "modesTitle": "六种 hook 模式，可单独开关",
+    "limitsTitle": "限制（做不到的）"
+  }
+}

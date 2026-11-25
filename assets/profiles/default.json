@@ -1,0 +1,16 @@
+{
+  "process": "main",
+  "sample": 2,
+  "window_ms": 1000,
+  "head": 200,
+  "tail": 200,
+  "max_logs": 600,
+  "hooks": [
+    {"classes": ["javax.crypto.Cipher", "javax.crypto.Mac"], "method": "doFinal", "mode": "log"},
+    {"class": "java.security.MessageDigest", "method": "digest", "mode": "log"},
+    {"class": "java.security.Signature", "method": "sign", "mode": "log"},
+    {"class": "android.util.Base64", "method": "encode", "mode": "log"},
+    {"class": "android.util.Base64", "method": "decode", "mode": "log"},
+    {"class": "java.net.URLEncoder", "method": "encode", "mode": "log"}
+  ]
+}
