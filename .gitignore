@@ -21,3 +21,7 @@ debug.ks
 .DS_Store
 Thumbs.db
 *.swp
+
+# 内部开发笔记，不进公开仓库
+NOTES.md
+FRAMEWORK.md
