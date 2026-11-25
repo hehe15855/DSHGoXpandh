@@ -464,8 +464,16 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) {}
     }
 
+    /** 更新源默认指向本仓库的 version.json，用户填了别的地址就按用户填的走 */
+    static final String DEFAULT_UPD_URL =
+            "https://raw.githubusercontent.com/hehe15855/DSHGoXpandh/master/version.json";
+
     String updUrl() {
-        try { return getSharedPreferences("xhook", 0).getString("updateUrl", ""); } catch (Throwable t) { return ""; }
+        try {
+            String v = getSharedPreferences("xhook", 0).getString("updateUrl", "");
+            if (v != null && v.trim().length() > 0) return v.trim();
+        } catch (Throwable t) { }
+        return DEFAULT_UPD_URL;
     }
 
     /** 拉更新源 JSON，和本地版本比。网络在后台线程跑。 */
@@ -1334,11 +1342,11 @@ public class SettingsActivity extends Activity {
                 "Android 10 及以下的兼容路径",
                 null);
 
-        LinearLayout cU = card(pr[4], "检查更新", "填一个更新源地址，有新版会提示");
+        LinearLayout cU = card(pr[4], "检查更新", "默认查本仓库的 version.json，也能改成你自己的");
         cU.addView(body("更新源是一个 JSON 地址，返回 {\"version\":\"12.8.0\",\"url\":\"下载页\",\"note\":\"说明\"}"));
         final EditText eUpd = new EditText(this);
         eUpd.setText(updUrl());
-        eUpd.setHint("https://…/version.json（留空=不检查）");
+        eUpd.setHint("留空 = 用默认（本仓库的 version.json）");
         eUpd.setTextSize(12);
         eUpd.setSingleLine(true);
         cU.addView(eUpd);
