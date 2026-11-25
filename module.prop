@@ -2,5 +2,5 @@ id=io.github.lyx2839272_coder.dshxpandh
 name=DSHGoXpandh
 version=v12.8.6
 versionCode=146
-author=lyx2839272-coder
+author=hehe15855
 description=DSH Go 的扩展模块：让手机上的 AI agent 能看见别的 App 在干什么、也能动手改。提供抓明文/改参数/改返回值/注入网页 JS/读 Cookie/调内部方法六种能力，网页注入支持标准 WebView、腾讯 XWeb、Chromium 三种内核。
