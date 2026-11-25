@@ -464,6 +464,22 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) {}
     }
 
+    /** 本仓库地址：点「打开发布页」直接跳这里 */
+    static final String REPO_URL = "https://github.com/hehe15855/DSHGoXpandh";
+    static final String RELEASE_URL = REPO_URL + "/releases/latest";
+
+    /** 用系统浏览器打开链接；没有浏览器就说明白 */
+    void openUrl(String url) {
+        try {
+            android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(url));
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(i);
+        } catch (Throwable t) {
+            toast("没有可以打开链接的浏览器");
+        }
+    }
+
     /** 更新源默认指向本仓库的 version.json，用户填了别的地址就按用户填的走 */
     // 用 jsDelivr 而不是 raw.githubusercontent：后者在这台机器上被 reset，前者稳定
     static final String DEFAULT_UPD_URL =
@@ -480,7 +496,7 @@ public class SettingsActivity extends Activity {
     /** 拉更新源 JSON，和本地版本比。网络在后台线程跑。 */
     void checkUpdate() {
         final String url = updUrl();
-        if (url.length() == 0) { toast("先填更新源地址并保存"); return; }
+        if (url.length() == 0) { toast("没有可用的更新源"); return; }
         toast("检查中…");
         new Thread(new Runnable() {
             @Override public void run() {
@@ -515,7 +531,12 @@ public class SettingsActivity extends Activity {
                         new android.app.AlertDialog.Builder(SettingsActivity.this)
                             .setTitle("检查更新")
                             .setMessage(result)
-                            .setPositiveButton("知道了", null)
+                            .setPositiveButton("去 GitHub 看看", new android.content.DialogInterface.OnClickListener() {
+                                @Override public void onClick(android.content.DialogInterface d, int w) {
+                                    openUrl(RELEASE_URL);
+                                }
+                            })
+                            .setNegativeButton("关闭", null)
                             .show();
                     }
                 });
@@ -1343,28 +1364,16 @@ public class SettingsActivity extends Activity {
                 "Android 10 及以下的兼容路径",
                 null);
 
-        LinearLayout cU = card(pr[4], "检查更新", "默认查本仓库的 version.json，也能改成你自己的");
-        cU.addView(body("更新源是一个 JSON 地址，返回 {\"version\":\"12.8.0\",\"url\":\"下载页\",\"note\":\"说明\"}"));
-        final EditText eUpd = new EditText(this);
-        eUpd.setText(updUrl());
-        eUpd.setHint("留空 = 用默认（本仓库的 version.json）");
-        eUpd.setTextSize(12);
-        eUpd.setSingleLine(true);
-        cU.addView(eUpd);
-        LinearLayout uRow = row(cU);
-        Button bSaveU = ghost(uRow, "保存地址");
-        bSaveU.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                try {
-                    getSharedPreferences("xhook", 0).edit()
-                        .putString("updateUrl", eUpd.getText().toString().trim()).commit();
-                    toast("已保存");
-                } catch (Throwable t) { }
-            }
-        });
-        Button bCheck = primary(uRow, "检查");
+        // 只留一个按钮：没有输入框、没有保存。更新源固定在代码里（本仓库的 version.json）。
+        LinearLayout cU = card(pr[4], "更新", "点一下看看有没有新版本");
+        cU.addView(body("当前版本 " + versionName()));
+        Button bCheck = primary(cU, "检查更新");
         bCheck.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { checkUpdate(); }
+        });
+        Button bGh = ghost(cU, "打开 GitHub 仓库");
+        bGh.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { openUrl(REPO_URL); }
         });
 
         LinearLayout cD = card(pr[4], "调试日志", "排查问题时打开，平时关着");
@@ -1729,6 +1738,8 @@ public class SettingsActivity extends Activity {
                 + "\n三种取值方式自动选：v10 密文解密 / value 列明文 / v20 明确报错。"
                 + "\n离线解密要 Root；不想给 Root，就用下面的运行时抓取。");
 
+        try { buildScopeCard(root); } catch (Throwable t) { }
+
         LinearLayout c1 = card(root, "离线解密", "读浏览器数据库自己解", 1);
         ckTarget = body("目标：" + ckTargetLabel());
         c1.addView(ckTarget);
@@ -1820,6 +1831,76 @@ public class SettingsActivity extends Activity {
                 });
             }
         }, "ck-scan").start();
+    }
+
+    /* ───────── 作用域：一键写进 LSPosed 配置 ───────── */
+
+    void buildScopeCard(LinearLayout root) {
+        LinearLayout c = card(root, "作用域", "模块要 hook 谁，就得在这里有谁", 1);
+        final TextView tv = body("当前：读取中…");
+        c.addView(tv);
+        Button add = primary(c, "把已装的浏览器加进来");
+        add.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { ckAddBrowsers(tv); }
+        });
+        Button rf = ghost(c, "刷新");
+        rf.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { ckRefreshScope(tv); }
+        });
+        c.addView(body("写的是 LSPosed 的配置库：modules（apk 路径）、modules_state（启用位）、scope（目标）三张表一起补，缺一张都不生效。改完要重启目标 App。"));
+        markRootOnly(add);
+        markRootOnly(rf);
+        ckRefreshScope(tv);
+    }
+
+    boolean isInstalled(String pkg) {
+        try {
+            getPackageManager().getPackageInfo(pkg, 0);
+            return true;
+        } catch (Throwable t) { return false; }
+    }
+
+    void ckRefreshScope(final TextView tv) {
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final String now = rootScopes();
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (tv == null) return;
+                        tv.setText(now.length() == 0
+                                ? "当前：空 —— 模块还没作用到任何 App"
+                                : "当前：" + now);
+                    }
+                });
+            }
+        }, "ck-scope-r").start();
+    }
+
+    void ckAddBrowsers(final TextView tv) {
+        if (tv != null) tv.setText("正在写入 LSPosed 配置…");
+        new Thread(new Runnable() {
+            @Override public void run() {
+                final java.util.List<String> added = new java.util.ArrayList<String>();
+                for (int i = 0; i < CookieVault.BROWSERS.length; i++) {
+                    String pkg = CookieVault.BROWSERS[i][0];
+                    if (!isInstalled(pkg)) continue;
+                    if (rootEditScope(pkg, true)) added.add(pkg);
+                }
+                final String now = rootScopes();
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        if (tv != null) {
+                            tv.setText(now.length() == 0
+                                    ? "写入失败 —— 检查 Root 授权"
+                                    : "当前：" + now);
+                        }
+                        toast(added.size() == 0
+                                ? "没写成：没有 Root 或目标浏览器都没装"
+                                : ("已写入 " + added.size() + " 个，重启那些 App 才生效"));
+                    }
+                });
+            }
+        }, "ck-scope-w").start();
     }
 
     void runCookieHarvest() {
@@ -3354,8 +3435,19 @@ public class SettingsActivity extends Activity {
             android.database.sqlite.SQLiteDatabase w = android.database.sqlite.SQLiteDatabase
                     .openDatabase(dst, null, android.database.sqlite.SQLiteDatabase.OPEN_READWRITE);
             if (add) {
+                String self = getPackageName();
+                // 三张表缺一不可：modules 给 LSPosed 找 apk、modules_state 是启用位、scope 才是目标。
+                // 以前只写 scope，所以模块永远登记不上（界面报「缺少 LSPosed 授权」的根因）。
+                try {
+                    w.execSQL("insert or replace into modules (module_pkg_name, apk_path) values (?, ?)",
+                            new Object[] { self, getPackageCodePath() });
+                } catch (Throwable t) { }
+                try {
+                    w.execSQL("insert or replace into modules_state (module_pkg_name, user_id, enabled, scope_request_blocked) values (?, 0, 1, 0)",
+                            new Object[] { self });
+                } catch (Throwable t) { }
                 w.execSQL("insert or ignore into scope (module_pkg_name, app_pkg_name, user_id) values (?, ?, 0)",
-                        new Object[] { getPackageName(), pkg });
+                        new Object[] { self, pkg });
             } else {
                 w.execSQL("delete from scope where module_pkg_name=? and app_pkg_name=?",
                         new Object[] { getPackageName(), pkg });
