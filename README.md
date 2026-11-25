@@ -83,11 +83,12 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 
 | 项 | 要求 |
 |---|---|
-| Android | 8.0（API 24）及以上 |
-| LSPosed | API 93+（经典版 / Zygisk 版都可以） |
-| Root | KernelSU / Magisk / APatch（LSPosed 本身就要） |
-| 已验证 | Android 15 + LSPosed 2.2.1；其他版本按上表理论兼容，未逐一验证 |
-| 架构 | 不限（纯 Java，无 native 库） |
+| Android | 8.0（API 24）～ 16（API 36）；APK 声明 `minSdk 24` / `targetSdk 36` |
+| LSPosed | 现代 API 93+；经典版 1.9.x 与 Zygisk 版 2.x 都支持 |
+| Root | KernelSU / Magisk / APatch —— LSPosed 本身就要 root |
+| 存储权限 | 「所有文件访问」（写控制目录）；不给也能进，但脚本与配方用不了 |
+| 架构 | 不限：纯 Java，无 native 库，armeabi-v7a / arm64-v8a / x86_64 通用 |
+| 已实测 | Android 15 + LSPosed 2.2.1 + KernelSU；其余版本按上表兼容，未逐一跑过 |
 
 ## 安装
 
@@ -102,16 +103,26 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 
 ## 从源码构建
 
-需要 JDK 8+、Android SDK build-tools（`aapt2` / `d8` / `zipalign` / `apksigner`）、以及 LSPosed 的 `xapi.jar`。
+| 依赖 | 版本 / 说明 |
+|---|---|
+| JDK | 8 或更高（源码按 `--release 8` 编译） |
+| Android SDK · platform | 含 `android.jar`，API 24 以上（默认找 `platform-36`） |
+| Android SDK · build-tools | `aapt2`、`d8`、`zipalign`、`apksigner` |
+| LSPosed API | `xapi.jar`（libxposed API），API 93+ |
 
 ```bash
-export ANDROID_JAR=/path/to/android.jar
+export ANDROID_JAR=/path/to/platforms/android-36/android.jar
 export XAPI_JAR=/path/to/xapi.jar
+export KS_PASS=yourpass          # 可选，签名口令，默认 123456
 bash build.sh
 # 产物：mod_signed.apk
 ```
 
-签名用同目录的 `debug.ks`（不在仓库里，自己放一个）。
+不设环境变量时，脚本按顺序自动探测：`$ANDROID_HOME/platforms/*`、`/usr/lib/android-sdk/platforms/*`、`~/Android/Sdk/platforms/*`；`xapi.jar` 找 `./xapi.jar`、`../xapi.jar`、`~/xapi.jar`。都找不到会直接报错退出，不会静默产出空壳。
+
+资源编译必须用带 `resources.arsc` 的 SDK platform jar；高版本 robolectric 的 android.jar 只够 javac 用，喂给 `aapt2` 会失败。
+
+签名用同目录的 `debug.ks`（不在仓库里，自己放一个，或设 `KEYSTORE` 指向别处）。
 
 ## 项目结构
 
