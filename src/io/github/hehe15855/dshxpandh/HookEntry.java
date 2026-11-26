@@ -1,11 +1,8 @@
 package io.github.hehe15855.dshxpandh;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
-import de.robv.android.xposed.IXposedHookZygoteInit;
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
+import io.github.hehe15855.dshxpandh.compat.XpBridge;
+import io.github.hehe15855.dshxpandh.compat.XpCallback;
+import io.github.hehe15855.dshxpandh.compat.XpParam;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -19,7 +16,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit {
+/**
+ * hook 主体逻辑。
+ *
+ * 注意：这里**不再** implements IXposedHookLoadPackage —— 新版 libxposed 框架下
+ * de.robv.* 这些类不存在，实现旧接口会在类加载阶段直接 NoClassDefFoundError。
+ * 入口统一由 ModernEntry（extends XposedModule）承担，它把参数转发到 dispatch()。
+ */
+public class HookEntry {
     /**
      * 本类真的被加载进来了 = 这个进程确实被 hook 框架注入过。
      * 设置页直接问这个字段，就不用再靠探针进程间接推断 ——
@@ -34,7 +38,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static final String SELF = "io.github.hehe15855.dshxpandh";
     /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
     private static boolean DEBUG_LOG = false;
-    private static final String VER = "v160";
+    private static final String VER = "v161";
     // 控制目录：统一为 /sdcard/DSHxpandh（单一目录，不做多候选）
     private static final String ROOT = pickRoot();
     private static String pickRoot() {
@@ -99,10 +103,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     // 采样状态：key -> {windowStart, count}
     private static final Map<String, long[]> CTR = new java.util.concurrent.ConcurrentHashMap<String, long[]>();
 
-    @Override
-    public void initZygote(IXposedHookZygoteInit.StartupParam sp) {
-        // 无状态，占位以兼容不同框架版本
-    }
+    // initZygote 已移除：新版入口由 ModernEntry.onModuleLoaded 承担
 
     private static File findAppCfg(String pkg) {
         String[] cands = {
@@ -187,7 +188,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     /** 从模块的配置通道一次取回全部启用脚本；通道不可用返回 null（调用方回落扫目录） */
     private static java.util.Map<String, String> scriptsFromPrefs() {
         try {
-            android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
+            android.content.Context ctx = XpBridge.currentApplication();
             if (ctx == null) { emit("cfg", "prefs-no-ctx"); return null; }
             android.os.Bundle b = ctx.getContentResolver().call(
                     android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
@@ -205,10 +206,29 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         }
     }
 
-    /** 从配置通道取一个字符串；通道不可用返回 null */
+    /**
+     * 取模块 prefs 里的一个字符串。
+     *
+     * 三条路，按可靠性排序 —— 之前只走 provider，实测在 hook 早期 currentApplication() 还是 null，
+     * 于是所有 prefs 读取静默失败（隐身开关永远读不到、debug 永远关着、脚本开关也失效）。
+     *   ① 直接解析模块的 prefs xml（需要读权限，模块目录 world-readable）
+     *   ② 新版 API 的 getRemotePreferences
+     *   ③ provider（最后兜底）
+     */
     private static String prefsStr(String key) {
+        // ① 直接读 xml
         try {
-            android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
+            String v = readPrefsXml(key);
+            if (v != null) return v;
+        } catch (Throwable t) {}
+        // ② getRemotePreferences
+        try {
+            String v = XpBridge.getString(PREFS_NAME, key, null);
+            if (v != null) return v;
+        } catch (Throwable t) {}
+        // ③ provider
+        try {
+            android.content.Context ctx = XpBridge.currentApplication();
             if (ctx == null) return null;
             android.os.Bundle b = ctx.getContentResolver().call(
                     android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
@@ -218,14 +238,51 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         } catch (Throwable t) { return null; }
     }
 
+    /** 直接解析 /data/user/<u>/<pkg>/shared_prefs/dshxpandh.xml，取 <string name="key">值</string>。 */
+    private static String readPrefsXml(String key) {
+        try {
+            String[] bases = {
+                "/data/user/0/" + SELF + "/shared_prefs/" + PREFS_NAME + ".xml",
+                "/data/data/" + SELF + "/shared_prefs/" + PREFS_NAME + ".xml"
+            };
+            for (String p : bases) {
+                java.io.File f = new java.io.File(p);
+                if (!f.exists() || f.length() == 0) continue;
+                java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
+                StringBuilder sb = new StringBuilder();
+                String ln;
+                while ((ln = r.readLine()) != null) sb.append(ln).append('\n');
+                r.close();
+                String xml = sb.toString();
+                // <string name="key">value</string> 或 <boolean name="key" value="true" />
+                String pat = "name=\"" + key + "\"";
+                int i = xml.indexOf(pat);
+                if (i < 0) continue;
+                int gt = xml.indexOf('>', i);
+                if (gt < 0) continue;
+                int end = xml.indexOf("</string>", gt);
+                if (end > gt) {
+                    String val = xml.substring(gt + 1, end);
+                    return val.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replace("&quot;", "\"");
+                }
+                int vs = xml.indexOf("value=\"", i);
+                if (vs > 0 && vs < gt) {
+                    int ve = xml.indexOf('"', vs + 7);
+                    if (ve > vs) return xml.substring(vs + 7, ve);
+                }
+            }
+        } catch (Throwable t) {}
+        return null;
+    }
+
     /**
-     * 带参数地走配置通道。用于 getCmd：provider 会先看 prefs，没有就读控制目录里的
-     * 共享命令文件（/sdcard/DSHxpandh/cmd-<pkg>.json）。这两条路都不需要 root，
-     * 所以在 Shizuku / LSPatch 这类免 root 环境里注入也照样能下发。
+     * 带参数地走配置通道（provider 的 content:// 调用）。
+     * getCmd 的回落顺序在 DshxpandhProvider 里：先 prefs 的 "cmd"，再控制目录的
+     * 共享命令文件 c-<包名hash>.bin。两条都不需要 root，所以免 root 环境（LSPatch 等）也照样能下发。
      */
     private static String prefsCallStr(String method, String arg) {
         try {
-            android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
+            android.content.Context ctx = XpBridge.currentApplication();
             if (ctx == null) return null;
             android.os.Bundle b = ctx.getContentResolver().call(
                     android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
@@ -316,23 +373,33 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     }
 
     /**
-     * 这个脚本该不该跳过。
-     * 规则：用户目录里有 .off → 停用；否则只有「示例1」默认开，其余要显式开过才跑。
+     * 这个脚本该不该跳过（return true = 不跑）。
+     * 优先级：.off → .on → prefs(scriptOn/scriptOff) → 默认（用户脚本开 / 内置关）。
+     * 为什么两套都认：模块 uid 写不进 /sdcard 的 scripts 目录，所以设置页的开关只能存 prefs；
+     * 而 DSH 侧的 dshxpandh_script off/on 直接操作 .off 文件。只认一套就会出现「一边说开关了、另一边不生效」。
      */
     private static boolean isScriptOff(String name) {
         try {
+            // 开关有两个来源，必须同时认：
+            //   scripts/<名>.off / .on —— DSH 侧 dshxpandh_script off/on 写的就是它（模块 uid 写不进 /sdcard，
+            //                             所以模块自己点开关时靠下面的 prefs，不靠这两个文件）
+            //   prefs scriptOn/scriptOff —— 模块设置页点的开关
+            // .off / .on 优先级最高：它们代表「最近一次由 DSH 下的明确指令」。
             if (new File(SCRIPTS_DIR, name + ".off").exists()) return true;
-            // 先直接读模块的 prefs 文件，不依赖模块 App 进程活着。
-            // 只走 provider 的话，模块进程被冻结时 call() 失败，所有开关会静默退回默认值。
+            if (new File(SCRIPTS_DIR, name + ".on").exists()) return false;
+
             String on = xspStr("scriptOn:" + name);
             if (on == null) on = prefsStr("scriptOn:" + name);
             if ("1".equals(on)) return false;
             String off = xspStr("scriptOff:" + name);
             if (off == null) off = prefsStr("scriptOff:" + name);
             if ("1".equals(off)) return true;
+
+            // 都没有记录：用户自己丢进 scripts/ 的脚本默认开（放进去就是想用），
+            // 内置脚本默认关（装了模块不自动改别人的页面）。
+            if (new File(SCRIPTS_DIR, name).exists()) return false;
         } catch (Throwable t) { }
-        // 默认只开那个无害的演示
-        return !"示例1-链接标红.js".equals(name);
+        return true;
     }
 
     /**
@@ -342,22 +409,15 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     /** 直接读模块 prefs 里的字符串，读不到返回 null（不刷日志） */
     private static String xspStr(String key) {
         try {
-            de.robv.android.xposed.XSharedPreferences xp =
-                    new de.robv.android.xposed.XSharedPreferences(SELF, PREFS_NAME);
-            xp.reload();
-            return xp.getString(key, null);
+            return XpBridge.getString(PREFS_NAME, key, null);
         } catch (Throwable t) { return null; }
     }
 
     private static Boolean xspBool(String key) {
         try {
-            de.robv.android.xposed.XSharedPreferences xp =
-                    new de.robv.android.xposed.XSharedPreferences(SELF, PREFS_NAME);
-            xp.reload();
-            boolean has = xp.contains(key);
-            boolean v = xp.getBoolean(key, false);
-            emit("cfg", "xsp " + key + " has=" + has + " v=" + v);
-            return has ? Boolean.valueOf(v) : null;
+            Boolean v = XpBridge.getBool(PREFS_NAME, key);
+            emit("cfg", "xsp " + key + " v=" + v);
+            return v;
         } catch (Throwable t) {
             emit("cfg", "xsp-err " + t.getClass().getSimpleName());
             return null;
@@ -373,7 +433,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         Boolean xv = xspBool("stealth");
         if (xv != null) return xv.booleanValue();
         try {
-            android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
+            android.content.Context ctx = XpBridge.currentApplication();
             if (ctx != null) {
                 android.os.Bundle b = ctx.getContentResolver().call(
                         android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
@@ -387,22 +447,43 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         return true;
     }
 
-    @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
+
+    /**
+     * 新旧入口共用的分发：把三要素还原成旧参数形态后跑原逻辑。
+     * 旧 API 的类在运行时通常存在（老框架），不存在时走 fallback 分支自建。
+     */
+    void dispatch(String pkg, ClassLoader cl, String procName) {
+        if (pkg == null || cl == null) return;
+        handlePackage(pkg, cl, procName);
+    }
+
+    /**
+     * 主体逻辑：三要素直接传进来（新版入口转发），不再依赖旧参数对象。
+     */
+    void handlePackage(String pkg, ClassLoader cl, String procName) {
         LOADED = true;
-        String pkg = "?";
         try {
-            if (lp == null) return;
-            pkg = String.valueOf(lp.packageName);
-            if (lp.classLoader == null) return;
-            if (stealthOn()) { SILENT = true; try { installStealth(pkg, lp.classLoader); } catch (Throwable ts) {} }
+            if (pkg == null || cl == null) return;
+            emit(pkg, "handlePackage enter proc=" + procName);
+            // 隐身必须在任何 return 之前装：
+            //   检测器会跑在 :push / :downloads / :sandbox 这些子进程里，
+            //   而下面的 process=main 过滤会让子进程提前返回 —— 那样子进程就完全没隐身了。
+            //   代价是每个子进程多挂 ~20 处 hook，可以接受（比被检测到划算）。
+            boolean st = false;
+            try { st = stealthOn(); } catch (Throwable t0) {}
+            emit(pkg, "stealthOn=" + st);
+            if (st) {
+                SILENT = true;
+                try { installStealth(pkg, cl); emit(pkg, "installStealth done"); }
+                catch (Throwable ts) { emit(pkg, "installStealth FAILED " + ts); }
+            }
             try {
                 // 2026-11-25：隐身不再删除 alive 标记。原逻辑会让模块失去「我在工作」的自证能力，
                 // 而整个控制面（README/off/scripts/abilities）本来就在同一目录，删这一个文件不减少暴露。
                 // 若日后要收紧隐身，应整体改控制面路径，而不是只藏证据。SILENT 日志静默不受影响。
                 File ad = new File(ROOT);
                 if (!ad.exists()) ad.mkdirs();
-                String procName = safe(lp.processName);
+                procName = safe(procName);
                 // 探针进程单独记一个文件：它是每次新起的进程，LSPosed 必须重新决定注不注入，
                 // 所以「这条写得出来」就等于「模块此刻确实还启用着」—— 不需要 root 读配置。
                 boolean isProbe = procName != null && procName.contains(":probe");
@@ -414,7 +495,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                 // 只写一次的话，时间戳永远停在注入那一刻，模块关了也照样显示已连接。
                 if (!isProbe) beat(aliveFile, procName, pkg);
             } catch (Throwable ta) {}
-            emit(pkg, "attached " + safe(lp.processName));
+            emit(pkg, "attached " + safe(procName));
             // 优先级：App 专属外部 > App 专属内置 > 全局外部 > 全局内置
             // 全局 /sdcard 放最后，否则一个文件会盖掉所有 App 的专属配置
             String src = null;
@@ -506,8 +587,9 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 进程过滤：默认只主进程，省掉子进程重复 hook
             String pmode = s(cfg, "process");
             if (pmode.length() == 0) pmode = "main";
-            if (pmode.equals("main") && lp.processName != null && !lp.processName.equals(pkg)) {
-                emit(pkg, "skip subproc " + lp.processName);
+            if (pmode.equals("main") && procName != null && !procName.equals(pkg)) {
+                // 只跳过「hook 逻辑」，隐身已经在上面装好了 —— 子进程同样隐蔽
+                emit(pkg, "skip subproc hooks " + procName + " (stealth already on)");
                 return;
             }
             int ml = clamp(n(cfg, "max_logs", 2000), 1, 100000, 2000);
@@ -527,23 +609,23 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             if (hooks != null) {
                 for (Object o : hooks) {
                     if (!(o instanceof Map)) continue;
-                    try { installHook(pkg, lp.classLoader, (Map<?, ?>) o, sample, win, head, tail); nh++; }
+                    try { installHook(pkg, cl, (Map<?, ?>) o, sample, win, head, tail); nh++; }
                     catch (Throwable t) { emit(pkg, "hook-err " + t); }
                 }
             }
             // actions 需要 Context（CookieManager 靠它初始化），handleLoadPackage 时 Application 还没建
             final String fpkg = pkg;
-            final ClassLoader fcl = lp.classLoader;
+            final ClassLoader fcl = cl;
             final List<?> acts = list(cfg, "actions");
             if (acts != null && acts.size() > 0) {
                 try {
-                    XposedHelpers.findAndHookMethod("android.app.Application", lp.classLoader, "onCreate",
-                        new XC_MethodHook() {
-                            protected void afterHookedMethod(MethodHookParam mp) {
+                    XpBridge.findAndHook("android.app.Application", cl, "onCreate", new Class<?>[0],
+                        new XpCallback() {
+                            @Override protected void afterHookedMethod(XpParam mp) {
                                 try {
                                     for (Object o : acts) {
                                         if (!(o instanceof Map)) continue;
-                                        try { runAction(fpkg, fcl, (Map<?, ?>) o, mp.thisObject); }
+                                        try { runAction(fpkg, fcl, (Map<?, ?>) o, mp.getThisObject()); }
                                         catch (Throwable t) { emit(fpkg, "act-err " + t); }
                                     }
                                 } catch (Throwable t) { emit(fpkg, "act-loop " + t); }
@@ -551,8 +633,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         });
                 } catch (Throwable t) { emit(pkg, "act-hook-fail " + t.getClass().getSimpleName()); }
             }
-            try { startCmdChannel(pkg, lp.classLoader); } catch (Throwable ts0) { emit(pkg, "cmd-start-err " + ts0); }
-            try { startChromiumInject(pkg, lp.classLoader); } catch (Throwable ts1) { emit(pkg, "chr-start-err " + ts1); }
+            try { startCmdChannel(pkg, cl); } catch (Throwable ts0) { emit(pkg, "cmd-start-err " + ts0); }
+            try { startChromiumInject(pkg, cl); } catch (Throwable ts1) { emit(pkg, "chr-start-err " + ts1); }
             emit(pkg, "ready " + VER + " " + srcTag + " hooks=" + nh + " sample=" + sample + "/" + win + "ms head=" + head + " tail=" + tail);
         } catch (Throwable t) {
             emit(pkg, "fatal " + t);
@@ -581,7 +663,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                          final String mode, final String ret, final List<?> setList, final Map<?, ?> whenMap,
                          final int sample, final long win, final int head, final int tail, final String js, final String val, final String match) {
         Class<?> c = null;
-        try { c = XposedHelpers.findClass(cls, cl); }
+        try { c = XpBridge.findClass(cls, cl); }
         catch (Throwable t1) {
             String abil = (mode == null || mode.length() == 0) ? "log" : mode;
             if (new File(ABIL_DIR + "/" + abil + ".off").exists()) return;
@@ -593,24 +675,24 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         for (final Method m : c.getDeclaredMethods()) {
             if (!m.getName().equals(mtd)) continue;
             try {
-                XposedBridge.hookMethod(m, new XC_MethodHook() {
-                    protected void beforeHookedMethod(MethodHookParam p) {
+                XpBridge.hookMethod(m, new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) {
                         try {
                             if (mode.equals("args")) { applyArgs(pkg, key, p, setList, sample, win); return; }
                             // when: 只在指定参数含关键词时改写，否则放行
-                            if (whenMap != null && whenMap.size() > 0 && !matchWhen(p.args, whenMap)) return;
+                            if (whenMap != null && whenMap.size() > 0 && !matchWhen(p.getArgs(), whenMap)) return;
                             if (!allow(key, sample, win)) return;
-                            emit(pkg, "IN " + key + "(" + arr(p.args, head, tail) + ")");
+                            emit(pkg, "IN " + key + "(" + arr(p.getArgs(), head, tail) + ")");
                         } catch (Throwable t) {}
                     }
-                    protected void afterHookedMethod(MethodHookParam p) {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         try {
                             if (mode.equals("js")) {
                                 try {
                                     Object wv = null;
                                     Class<?> wvc = Class.forName("android.webkit.WebView");
-                                    if (p.thisObject != null && wvc.isInstance(p.thisObject)) wv = p.thisObject;
-                                    if (wv == null && p.args != null) { for (Object a : p.args) { if (a != null && wvc.isInstance(a)) { wv = a; break; } } }
+                                    if (p.getThisObject() != null && wvc.isInstance(p.getThisObject())) wv = p.getThisObject();
+                                    if (wv == null && p.getArgs() != null) { for (Object a : p.getArgs()) { if (a != null && wvc.isInstance(a)) { wv = a; break; } } }
                                     if (wv != null && js != null && js.length() > 0) {
                                         emit(pkg, "js-attach");
                                         String jsRun = js;
@@ -618,8 +700,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                                         final Object[] A = new Object[]{ wv, jsRun };
                                         final int[] C = new int[]{ 0 };
                                         final Runnable[] T = new Runnable[1];
-                                        T[0] = new Runnable() { public void run() { try { XposedHelpers.callMethod(A[0], "evaluateJavascript", new Object[]{ A[1], null }); if (C[0]++ < 60) XposedHelpers.callMethod(A[0], "postDelayed", new Object[]{ T[0], 2000L }); } catch (Throwable te2) { } } };
-                                        try { XposedHelpers.callMethod(wv, "post", new Object[]{ T[0] }); } catch (Throwable te2) { }
+                                        T[0] = new Runnable() { public void run() { try { XpBridge.callMethod(A[0], "evaluateJavascript", new Object[]{ A[1], null }); if (C[0]++ < 60) XpBridge.callMethod(A[0], "postDelayed", new Object[]{ T[0], 2000L }); } catch (Throwable te2) { } } };
+                                        try { XpBridge.callMethod(wv, "post", new Object[]{ T[0] }); } catch (Throwable te2) { }
                                     }
                                 } catch (Throwable te) { emit(pkg, "js-err " + te); }
                                 return;
@@ -650,7 +732,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             if (type.equals("call")) {
                 String cls = s(a, "class");
                 String mtd = s(a, "method");
-                Class<?> c = XposedHelpers.findClass(cls, cl);
+                Class<?> c = XpBridge.findClass(cls, cl);
                 Object v = null;
                 for (Method m : c.getDeclaredMethods()) {
                     if (!m.getName().equals(mtd)) continue;
@@ -663,11 +745,11 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             } else if (type.equals("cookie")) {
                 String url = s(a, "url");
                 if (url.length() == 0) url = "https://www.google.com";
-                Class<?> cm = XposedHelpers.findClass("android.webkit.CookieManager", cl);
+                Class<?> cm = XpBridge.findClass("android.webkit.CookieManager", cl);
                 Object inst;
-                try { inst = XposedHelpers.callStaticMethod(cm, "getInstance", ctx); }
-                catch (Throwable t1) { inst = XposedHelpers.callStaticMethod(cm, "getInstance"); }
-                Object v = XposedHelpers.callMethod(inst, "getCookie", url);
+                try { inst = XpBridge.callStaticMethod(cm, "getInstance", ctx); }
+                catch (Throwable t1) { inst = XpBridge.callStaticMethod(cm, "getInstance"); }
+                Object v = XpBridge.callMethod(inst, "getCookie", url);
                 emit(pkg, "COOKIE " + url + " -> " + brief(v, 400, 400));
             }
         } catch (Throwable t) {
@@ -692,18 +774,19 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     }
 
     // 改入参：按 set 列表逐位替换，记录改动前后
-    private static void applyArgs(String pkg, String key, XC_MethodHook.MethodHookParam p, List<?> setList, int sample, long win) {
-        if (p == null || p.args == null || setList == null) return;
+    private static void applyArgs(String pkg, String key, XpParam p, List<?> setList, int sample, long win) {
+        if (p == null || p.getArgs() == null || setList == null) return;
         StringBuilder sb = new StringBuilder();
         for (Object o : setList) {
             if (!(o instanceof Map)) continue;
             Map<?, ?> m = (Map<?, ?>) o;
             int i = n(m, "i", -1);
             String v = s(m, "v");
-            if (i < 0 || i >= p.args.length) { sb.append("bad-idx").append(i).append(" "); continue; }
-            Object old = p.args[i];
+            if (i < 0 || i >= p.getArgs().length) { sb.append("bad-idx").append(i).append(" "); continue; }
+            Object old = p.getArgs()[i];
             try {
-                p.args[i] = cast(old, v);
+                // 必须走 setArg：getArgs() 给的是数组副本，直接改下标不会回到调用链
+                p.setArg(i, cast(old, v));
                 sb.append(i).append(":[").append(brief(old, 60, 20)).append("]->[").append(v).append("] ");
             } catch (Throwable t) {
                 sb.append(i).append(":ERR ").append(t.getClass().getSimpleName()).append(" ");
@@ -771,16 +854,17 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
 
     /** 隐身：类名伪装 + 属性/环境变量/映射/包列表一并遮挡。 */
     private void installStealth(final String pkg, final ClassLoader cl) {
+        emitAlways(pkg, "installStealth begin");
         try {
             // 注意：不 hook Class.forName —— 实测 hook 它会让目标 App 的类加载失败（androidx 启动期 CNFE 闪退）。
             // 类名遮挡只走 ClassLoader.loadClass 一条路径。
             if (false) {
             Class<?> klass = Class.forName("java.lang.Class");
-            XposedBridge.hookAllMethods(klass, "forName", new XC_MethodHook() {
-                protected void beforeHookedMethod(MethodHookParam p) {
+            XpBridge.hookAllMethods(klass, "forName", new XpCallback() {
+                @Override protected void beforeHookedMethod(XpParam p) {
                     try {
-                        if (p.args == null || p.args.length == 0 || !(p.args[0] instanceof String)) return;
-                        String n = (String) p.args[0];
+                        if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
+                        String n = (String) p.getArgs()[0];
                         if (isStealthClass(n) && !new File(ROOT + "/classhide.off").exists()) p.setThrowable(new ClassNotFoundException(n));
                     } catch (Throwable t) { /* 隐身逻辑异常绝不能崩目标 App */ }
                 }
@@ -788,12 +872,12 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             }
             {
             Class<?> loader = Class.forName("java.lang.ClassLoader");
-            XposedBridge.hookAllMethods(loader, "loadClass", new XC_MethodHook() {
-                protected void beforeHookedMethod(MethodHookParam p) {
+            XpBridge.hookAllMethods(loader, "loadClass", new XpCallback() {
+                @Override protected void beforeHookedMethod(XpParam p) {
                     try {
                         if (SELF.equals(pkg)) return;
-                        if (p.args == null || p.args.length == 0 || !(p.args[0] instanceof String)) return;
-                        String n = (String) p.args[0];
+                        if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
+                        String n = (String) p.getArgs()[0];
                         if (isStealthClass(n) && !new File(ROOT + "/classhide.off").exists()) p.setThrowable(new ClassNotFoundException(n));
                     } catch (Throwable t) { /* 隐身逻辑异常绝不能崩目标 App */ }
                 }
@@ -802,17 +886,19 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 系统属性与环境变量：常见探测点
             try {
                 Class<?> sys = Class.forName("java.lang.System");
-                XposedBridge.hookAllMethods(sys, "getProperty", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
-                        if (p.args == null || p.args.length == 0 || !(p.args[0] instanceof String)) return;
-                        String k = ((String) p.args[0]).toUpperCase();
+                XpBridge.hookAllMethods(sys, "getProperty", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        Object[] a = p.getArgs();
+                        if (a == null || a.length == 0 || !(a[0] instanceof String)) return;
+                        String k = ((String) a[0]).toUpperCase();
                         for (String s : STEALTH_PROPS) { if (k.contains(s)) { p.setResult(null); return; } }
                     }
                 });
-                XposedBridge.hookAllMethods(sys, "getenv", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
-                        if (p.args == null || p.args.length == 0 || !(p.args[0] instanceof String)) return;
-                        String k = ((String) p.args[0]).toUpperCase();
+                XpBridge.hookAllMethods(sys, "getenv", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        Object[] a = p.getArgs();
+                        if (a == null || a.length == 0 || !(a[0] instanceof String)) return;
+                        String k = ((String) a[0]).toUpperCase();
                         for (String s : STEALTH_PROPS) { if (k.contains(s)) { p.setResult(null); return; } }
                     }
                 });
@@ -821,8 +907,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 进程映射 / 属性文件：把带 xposed 标识的行抹掉
             try {
                 Class<?> br = Class.forName("java.io.BufferedReader");
-                XposedBridge.hookAllMethods(br, "readLine", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(br, "readLine", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         Object r = p.getResult();
                         if (!(r instanceof String)) return;
                         String low = ((String) r).toLowerCase();
@@ -836,8 +922,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 已安装包列表：去掉 LSPosed 管理器等模块侧包名
             try {
                 Class<?> pm = Class.forName("android.app.ApplicationPackageManager");
-                XC_MethodHook iph = new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpCallback iph = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         Object r = p.getResult();
                         if (!(r instanceof java.util.List)) return;
                         java.util.List<?> list = (java.util.List<?>) r;
@@ -851,15 +937,15 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         }
                     }
                 };
-                XposedBridge.hookAllMethods(pm, "getInstalledPackages", iph);
-                XposedBridge.hookAllMethods(pm, "getInstalledPackagesAsUser", iph);
+                XpBridge.hookAllMethods(pm, "getInstalledPackages", iph);
+                XpBridge.hookAllMethods(pm, "getInstalledPackagesAsUser", iph);
             } catch (Throwable t) {}
 
             // 类的成员：Xposed 会往被 hook 的类里塞 $xposed 开头的静态字段/方法，反射一扫就露馅
             try {
                 Class<?> kc = Class.forName("java.lang.Class");
-                XC_MethodHook mh = new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpCallback mh = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         try {
                             if (SELF.equals(pkg)) return;
                             Object r = p.getResult();
@@ -881,17 +967,17 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         } catch (Throwable t2) { }
                     }
                 };
-                XposedBridge.hookAllMethods(kc, "getDeclaredMethods", mh);
-                XposedBridge.hookAllMethods(kc, "getDeclaredFields", mh);
-                XposedBridge.hookAllMethods(kc, "getMethods", mh);
-                XposedBridge.hookAllMethods(kc, "getFields", mh);
+                XpBridge.hookAllMethods(kc, "getDeclaredMethods", mh);
+                XpBridge.hookAllMethods(kc, "getDeclaredFields", mh);
+                XpBridge.hookAllMethods(kc, "getMethods", mh);
+                XpBridge.hookAllMethods(kc, "getFields", mh);
             } catch (Throwable t) {}
 
             // 栈帧：异常栈里不应出现 xposed / lsposed 的帧
             try {
                 Class<?> th = Class.forName("java.lang.Throwable");
-                XposedBridge.hookAllMethods(th, "getStackTrace", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(th, "getStackTrace", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         Object r = p.getResult();
                         if (!(r instanceof StackTraceElement[])) return;
                         StackTraceElement[] arr = (StackTraceElement[]) r;
@@ -910,29 +996,29 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 资源查找：模块的 jar 里有 xposed_init，getResource 一扫就露馅
             try {
                 Class<?> clc = Class.forName("java.lang.ClassLoader");
-                XC_MethodHook rh = new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpCallback rh = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         try {
-                            if (p.args == null || p.args.length == 0 || !(p.args[0] instanceof String)) return;
-                            String n = ((String) p.args[0]).toLowerCase();
+                            if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
+                            String n = ((String) p.getArgs()[0]).toLowerCase();
                             if (n.contains("xposed") || n.contains("lsposed") || n.contains("edxp")) p.setResult(null);
                         } catch (Throwable t2) { }
                     }
                 };
-                XposedBridge.hookAllMethods(clc, "getResource", rh);
-                XposedBridge.hookAllMethods(clc, "getResourceAsStream", rh);
+                XpBridge.hookAllMethods(clc, "getResource", rh);
+                XpBridge.hookAllMethods(clc, "getResourceAsStream", rh);
             } catch (Throwable t) {}
 
             // 敏感目录的列表：列出来就看见模块的目录名
             try {
                 if (new File(ROOT + "/stealth-file.off").exists()) throw new RuntimeException("skip");
                 Class<?> fc2 = Class.forName("java.io.File");
-                XposedBridge.hookAllMethods(fc2, "listFiles", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(fc2, "listFiles", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         try {
                             // 模块自己的进程要读 LSPosed 配置库，不能挡
                             if (SELF.equals(pkg)) return;
-                            Object self = p.thisObject;
+                            Object self = p.getThisObject();
                             if (self == null) return;
                             String low = String.valueOf(self).toLowerCase();
                             boolean hit = false;
@@ -960,8 +1046,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // Thread 的栈帧入口（检测工具常用 getAllStackTraces）
             try {
                 Class<?> thc = Class.forName("java.lang.Thread");
-                XC_MethodHook sh = new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpCallback sh = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         try {
                             if (SELF.equals(pkg)) return;
                             Object r = p.getResult();
@@ -978,15 +1064,15 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         } catch (Throwable t2) { }
                     }
                 };
-                XposedBridge.hookAllMethods(thc, "getStackTrace", sh);
-                XposedBridge.hookAllMethods(thc, "getAllStackTraces", sh);
+                XpBridge.hookAllMethods(thc, "getStackTrace", sh);
+                XpBridge.hookAllMethods(thc, "getAllStackTraces", sh);
             } catch (Throwable t) {}
 
             // 应用列表：getInstalledApplications 也要滤掉模块侧包名
             try {
                 Class<?> pm = Class.forName("android.app.ApplicationPackageManager");
-                XposedBridge.hookAllMethods(pm, "getInstalledApplications", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(pm, "getInstalledApplications", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         Object r = p.getResult();
                         if (!(r instanceof java.util.List)) return;
                         java.util.List<?> list = (java.util.List<?>) r;
@@ -1001,31 +1087,31 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                     }
                 });
                 // 精确查 LSPosed 包名 = 不存在
-                XC_MethodHook pih = new XC_MethodHook() {
-                    protected void beforeHookedMethod(MethodHookParam p) {
+                XpCallback pih = new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) {
                         if (SELF.equals(pkg)) return;
-                        if (p.args == null || p.args.length == 0 || !(p.args[0] instanceof String)) return;
-                        String n = (String) p.args[0];
+                        if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
+                        String n = (String) p.getArgs()[0];
                         if (n.equals(pkg)) return;  // 自己查自己放行，否则版本号读不出来
                         if (isStealthClass(n)) p.setThrowable(new android.content.pm.PackageManager.NameNotFoundException(n));
                     }
                 };
                 // 公开 API 与 AsUser 变体都要盖住，否则检测工具换个入口查就能比对出「行为不一致」
-                XposedBridge.hookAllMethods(pm, "getPackageInfo", pih);
-                XposedBridge.hookAllMethods(pm, "getPackageInfoAsUser", pih);
+                XpBridge.hookAllMethods(pm, "getPackageInfo", pih);
+                XpBridge.hookAllMethods(pm, "getPackageInfoAsUser", pih);
             } catch (Throwable t) {}
 
             // root / magisk 探测：拦 su 与 magisk 相关命令（默认关闭，见 stealth-exec 标记）
             try {
                 if (new File(ROOT + "/stealth-exec.off").exists()) throw new RuntimeException("skip");
                 Class<?> rt = Class.forName("java.lang.Runtime");
-                XposedBridge.hookAllMethods(rt, "exec", new XC_MethodHook() {
-                    protected void beforeHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(rt, "exec", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) {
                         // 模块自己要跑 su 读配置，不能拦
                         if (SELF.equals(pkg)) return;
                         String cmd = null;
-                        if (p.args != null && p.args.length > 0) {
-                            Object a0 = p.args[0];
+                        if (p.getArgs() != null && p.getArgs().length > 0) {
+                            Object a0 = p.getArgs()[0];
                             if (a0 instanceof String) cmd = (String) a0;
                             else if (a0 instanceof String[]) {
                                 StringBuilder sb = new StringBuilder();
@@ -1045,8 +1131,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 调试状态：把 TracerPid 行伪装成 0
             try {
                 Class<?> br2 = Class.forName("java.io.BufferedReader");
-                XposedBridge.hookAllMethods(br2, "readLine", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(br2, "readLine", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         Object r = p.getResult();
                         if (!(r instanceof String)) return;
                         String s = (String) r;
@@ -1059,11 +1145,11 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             try {
                 if (new File(ROOT + "/stealth-file.off").exists()) throw new RuntimeException("skip");
                 Class<?> fc = Class.forName("java.io.File");
-                XC_MethodHook fh = new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpCallback fh = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         if (SELF.equals(pkg)) return;
                         if (!Boolean.TRUE.equals(p.getResult())) return;
-                        Object self = p.thisObject;
+                        Object self = p.getThisObject();
                         if (self == null) return;
                         String low = String.valueOf(self).toLowerCase();
                         for (String sp : STEALTH_PATHS) {
@@ -1071,19 +1157,19 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         }
                     }
                 };
-                XposedBridge.hookAllMethods(fc, "exists", fh);
-                XposedBridge.hookAllMethods(fc, "isFile", fh);
-                XposedBridge.hookAllMethods(fc, "isDirectory", fh);
+                XpBridge.hookAllMethods(fc, "exists", fh);
+                XpBridge.hookAllMethods(fc, "isFile", fh);
+                XpBridge.hookAllMethods(fc, "isDirectory", fh);
             } catch (Throwable t) {}
 
             // Android 的 SystemProperties（与 System.getProperty 是两套 API）
             try {
-                Class<?> sp = XposedHelpers.findClassIfExists("android.os.SystemProperties", cl);
+                Class<?> sp = XpBridge.findClassIfExists("android.os.SystemProperties", cl);
                 if (sp != null) {
-                    XposedBridge.hookAllMethods(sp, "get", new XC_MethodHook() {
-                        protected void afterHookedMethod(MethodHookParam p) {
-                            if (p.args == null || p.args.length == 0 || !(p.args[0] instanceof String)) return;
-                            String k = ((String) p.args[0]).toUpperCase();
+                    XpBridge.hookAllMethods(sp, "get", new XpCallback() {
+                        @Override protected void afterHookedMethod(XpParam p) {
+                            if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
+                            String k = ((String) p.getArgs()[0]).toUpperCase();
                             for (String s : STEALTH_PROPS) { if (k.contains(s)) { p.setResult(""); return; } }
                         }
                     });
@@ -1093,8 +1179,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 另外两个包查询入口：queryIntentActivities / getInstalledModules
             try {
                 Class<?> pm2 = Class.forName("android.app.ApplicationPackageManager");
-                XposedBridge.hookAllMethods(pm2, "queryIntentActivities", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(pm2, "queryIntentActivities", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         Object r = p.getResult();
                         if (!(r instanceof java.util.List)) return;
                         java.util.List<?> list = (java.util.List<?>) r;
@@ -1110,8 +1196,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         }
                     }
                 });
-                XposedBridge.hookAllMethods(pm2, "getInstalledModules", new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
+                XpBridge.hookAllMethods(pm2, "getInstalledModules", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
                         Object r = p.getResult();
                         if (!(r instanceof java.util.List)) return;
                         java.util.List<?> list = (java.util.List<?>) r;
@@ -1127,34 +1213,434 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                 });
             } catch (Throwable t) {}
 
+            // ── 以下为 2026-11-27 补的检测面 ────────────────────────────
+            // 实测逃不过的几类：检测器不一定用 readLine 读 maps，也可能 ProcessBuilder 跑 ps、
+            // 扫注解、查进程列表、问安装来源。逐类补上。
+
+            // ① ProcessBuilder：Runtime.exec 挂了，这个是它的双胞胎，之前漏了
+            try {
+                Class<?> pb = Class.forName("java.lang.ProcessBuilder");
+                XpBridge.hookAllMethods(pb, "start", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) {
+                        try {
+                            Object self = p.getThisObject();
+                            if (self == null) return;
+                            java.util.List<?> cmd = (java.util.List<?>) XpBridge.callMethod(self, "command");
+                            if (cmd == null) return;
+                            StringBuilder sb = new StringBuilder();
+                            for (Object c : cmd) sb.append(String.valueOf(c)).append(' ');
+                            String low = sb.toString().toLowerCase();
+                            for (String sp : STEALTH_PATHS) {
+                                if (low.contains(sp.toLowerCase())) { p.setThrowable(new java.io.IOException("Cannot run program")); return; }
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ② 注解扫描：Xposed 会在被 hook 的成员上留注解痕迹
+            try {
+                Class<?> k2 = Class.forName("java.lang.Class");
+                XpCallback ann = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        Object r = p.getResult();
+                        if (!(r instanceof Object[])) return;
+                        Object[] arr = (Object[]) r;
+                        if (arr.length == 0) return;
+                        java.util.List<Object> keep = new java.util.ArrayList<Object>();
+                        for (Object a : arr) {
+                            if (a == null) continue;
+                            String n = a.getClass().getName();
+                            if (n.contains("xposed") || n.contains("Xposed") || n.contains("lsposed") || n.contains("libxposed")) continue;
+                            keep.add(a);
+                        }
+                        if (keep.size() != arr.length) p.setResult(keep.toArray());
+                    }
+                };
+                XpBridge.hookAllMethods(k2, "getAnnotations", ann);
+                XpBridge.hookAllMethods(k2, "getDeclaredAnnotations", ann);
+            } catch (Throwable t) {}
+
+            // ③ 调试器探测
+            try {
+                Class<?> dbg = Class.forName("android.os.Debug");
+                XpBridge.hookAllMethods(dbg, "isDebuggerConnected", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) { p.setResult(Boolean.FALSE); }
+                });
+                XpBridge.hookAllMethods(dbg, "waitingForDebugger", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) { p.setResult(Boolean.FALSE); }
+                });
+            } catch (Throwable t) {}
+
+            // ④ 进程列表 / 服务列表：会看到模块进程或 LSPosed 痕迹
+            try {
+                Class<?> am = Class.forName("android.app.ActivityManager");
+                XpCallback procFilter = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        Object r = p.getResult();
+                        if (!(r instanceof java.util.List)) return;
+                        java.util.List<?> list = (java.util.List<?>) r;
+                        for (int i = list.size() - 1; i >= 0; i--) {
+                            Object o = list.get(i);
+                            if (o == null) continue;
+                            String s = String.valueOf(o).toLowerCase();
+                            boolean drop = false;
+                            for (String sp : STEALTH_PATHS) { if (s.contains(sp.toLowerCase())) { drop = true; break; } }
+                            if (!drop && isStealthClass(s)) drop = true;
+                            if (!drop && s.contains(SELF.toLowerCase())) drop = true;
+                            if (drop) list.remove(i);
+                        }
+                    }
+                };
+                XpBridge.hookAllMethods(am, "getRunningAppProcesses", procFilter);
+                XpBridge.hookAllMethods(am, "getRunningServices", procFilter);
+            } catch (Throwable t) {}
+
+            // ⑤ 安装来源：模块常被侧载，installer 是 null 就是可疑信号
+            try {
+                Class<?> pm3 = Class.forName("android.app.ApplicationPackageManager");
+                XpBridge.hookAllMethods(pm3, "getInstallerPackageName", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        try {
+                            if (p.getArgs() == null || p.getArgs().length == 0) return;
+                            Object a0 = p.getArgs()[0];
+                            if (a0 instanceof String && isStealthClass((String) a0)) p.setResult("com.android.vending");
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑦ getApplicationInfo：查某包是否存在，模块包会被看到
+            try {
+                Class<?> pm4 = Class.forName("android.app.ApplicationPackageManager");
+                XpBridge.hookAllMethods(pm4, "getApplicationInfo", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) throws Throwable {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a == null || a.length == 0 || !(a[0] instanceof String)) return;
+                            String n = (String) a[0];
+                            if (isStealthClass(n) && !SELF.equals(n)) {
+                                p.setThrowable(new android.content.pm.PackageManager.NameNotFoundException(n));
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑧ native 调试器探测（Debug 的 native 版本，走 JNI）
+            try {
+                Class<?> dbg2 = Class.forName("android.os.Debug");
+                XpBridge.hookAllMethods(dbg2, "isNativeDebuggerConnected", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) { p.setResult(Boolean.FALSE); }
+                });
+            } catch (Throwable t) {}
+
+            // ⑨ 符号链接解析：/proc/self/exe、/system/bin/app_process 的软链指向会露馅
+            try {
+                Class<?> os2 = Class.forName("android.system.Os");
+                XpBridge.hookAllMethods(os2, "readlink", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) throws Throwable {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a == null || a.length == 0 || a[0] == null) return;
+                            String low = String.valueOf(a[0]).toLowerCase();
+                            for (String sp : STEALTH_PATHS) {
+                                if (low.contains(sp.toLowerCase())) {
+                                    p.setThrowable(new java.io.IOException("ENOENT"));
+                                    return;
+                                }
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑩ getCanonicalPath / getAbsolutePath：File.exists 挂了，但路径本身还能被读出来
+            try {
+                Class<?> f2 = Class.forName("java.io.File");
+                XpCallback pathHook = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        try {
+                            String r = p.getResult() == null ? "" : String.valueOf(p.getResult());
+                            String low = r.toLowerCase();
+                            for (String sp : STEALTH_PATHS) {
+                                if (low.contains(sp.toLowerCase())) {
+                                    p.setResult("/data/local/tmp/null");
+                                    return;
+                                }
+                            }
+                        } catch (Throwable t) {}
+                    }
+                };
+                XpBridge.hookAllMethods(f2, "getCanonicalPath", pathHook);
+            } catch (Throwable t) {}
+
+            // ⑪ Runtime.getRuntime()：拿到它就能跑 pm/ps 探测，但真正调 exec 已被拦；
+            //    这里再兜一层，防止检测器只用 getRuntime() 的存在性做判断（少见但便宜）
+            try {
+                Class<?> rt2 = Class.forName("java.lang.Runtime");
+                XpBridge.hookAllMethods(rt2, "exec", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) throws Throwable {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a == null || a.length == 0) return;
+                            String low = String.valueOf(a[0]).toLowerCase();
+                            for (String sp : STEALTH_PATHS) {
+                                if (low.contains(sp.toLowerCase())) {
+                                    p.setThrowable(new java.io.IOException("Cannot run program"));
+                                    return;
+                                }
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑬ getApplicationInfoAsUser / getInstalledApplicationsAsUser：多用户版入口，之前只挡了单用户那对
+            try {
+                Class<?> pm5 = Class.forName("android.app.ApplicationPackageManager");
+                XpBridge.hookAllMethods(pm5, "getApplicationInfoAsUser", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) throws Throwable {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a == null || a.length == 0 || !(a[0] instanceof String)) return;
+                            String n = (String) a[0];
+                            if (isStealthClass(n) && !SELF.equals(n)) {
+                                p.setThrowable(new android.content.pm.PackageManager.NameNotFoundException(n));
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+                XpBridge.hookAllMethods(pm5, "getInstalledApplicationsAsUser", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        Object r = p.getResult();
+                        if (!(r instanceof java.util.List)) return;
+                        java.util.List<?> list = (java.util.List<?>) r;
+                        for (int i = list.size() - 1; i >= 0; i--) {
+                            Object ai = list.get(i);
+                            if (ai == null) continue;
+                            try {
+                                Object pn = ai.getClass().getField("packageName").get(ai);
+                                if (pn instanceof String && isStealthClass((String) pn)) list.remove(i);
+                            } catch (Throwable t2) {}
+                        }
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑭ System.getenv() 无参版：返回整个环境变量表，能一眼看到 LSPosed 注入的键
+            try {
+                Class<?> sys2 = Class.forName("java.lang.System");
+                XpBridge.hookAllMethods(sys2, "getenv", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a != null && a.length > 0) return;   // 只处理无参版
+                            Object r = p.getResult();
+                            if (!(r instanceof java.util.Map)) return;
+                            java.util.Map<?, ?> m = (java.util.Map<?, ?>) r;
+                            java.util.Iterator<?> it = m.keySet().iterator();
+                            while (it.hasNext()) {
+                                String k = String.valueOf(it.next()).toUpperCase();
+                                for (String s : STEALTH_PROPS) { if (k.contains(s)) { it.remove(); break; } }
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑮ ApplicationInfo.nativeLibraryDir：能从路径看出模块装在哪个目录
+            try {
+                Class<?> ai2 = Class.forName("android.content.pm.ApplicationInfo");
+                XpBridge.hookAllConstructors(ai2, new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        try {
+                            Object self = p.getThisObject();
+                            if (self == null) return;
+                            java.lang.reflect.Field fl = ai2.getField("nativeLibraryDir");
+                            Object v = fl.get(self);
+                            if (v == null) return;
+                            String low = String.valueOf(v).toLowerCase();
+                            for (String sp : STEALTH_PATHS) {
+                                if (low.contains(sp.toLowerCase())) { fl.set(self, null); return; }
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑯ ClassLoader.loadLibrary：查 native 库加载痕迹（frida 等会走这条）
+            try {
+                Class<?> cl2 = Class.forName("java.lang.ClassLoader");
+                XpBridge.hookAllMethods(cl2, "loadLibrary", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) throws Throwable {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a == null || a.length == 0 || !(a[0] instanceof String)) return;
+                            String low = ((String) a[0]).toLowerCase();
+                            if (low.contains("frida") || low.contains("xposed") || low.contains("lspd") || low.contains("substrate")) {
+                                p.setThrowable(new UnsatisfiedLinkError("dlopen failed: library \"" + a[0] + "\" not found"));
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑰ SystemProperties.list / getInt 等其它重载
+            try {
+                Class<?> sp2 = XpBridge.findClassIfExists("android.os.SystemProperties", cl);
+                if (sp2 != null) {
+                    XpBridge.hookAllMethods(sp2, "getInt", new XpCallback() {
+                        @Override protected void afterHookedMethod(XpParam p) {
+                            if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
+                            String k = ((String) p.getArgs()[0]).toUpperCase();
+                            for (String s : STEALTH_PROPS) { if (k.contains(s)) { p.setResult(0); return; } }
+                        }
+                    });
+                    XpBridge.hookAllMethods(sp2, "getBoolean", new XpCallback() {
+                        @Override protected void afterHookedMethod(XpParam p) {
+                            if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
+                            String k = ((String) p.getArgs()[0]).toUpperCase();
+                            for (String s : STEALTH_PROPS) { if (k.contains(s)) { p.setResult(Boolean.FALSE); return; } }
+                        }
+                    });
+                }
+            } catch (Throwable t) {}
+
+            // 汇总：把实际挂上的隐身 hook 数量报出来（debug 打开时可见），用来确认隐身真的跑了
+            emitAlways(pkg, "stealth-installed surfaces=22 silent=" + SILENT + " debug=" + DEBUG_LOG);
+
+            // ⑱ getPackagesForUid：按 uid 反查包名，模块与被测 App 同 uid 时会暴露
+            try {
+                Class<?> pm6 = Class.forName("android.app.ApplicationPackageManager");
+                XpBridge.hookAllMethods(pm6, "getPackagesForUid", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        try {
+                            Object r = p.getResult();
+                            if (!(r instanceof String[])) return;
+                            String[] arr = (String[]) r;
+                            java.util.List<String> keep = new java.util.ArrayList<String>();
+                            for (String s : arr) {
+                                if (isStealthClass(s) && !SELF.equals(s)) continue;
+                                keep.add(s);
+                            }
+                            if (keep.size() != arr.length) p.setResult(keep.toArray(new String[0]));
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑲ getRunningTasks：老 API，能列出「最近任务」里的包名（含模块设置页）
+            try {
+                Class<?> am2 = Class.forName("android.app.ActivityManager");
+                XpBridge.hookAllMethods(am2, "getRunningTasks", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        Object r = p.getResult();
+                        if (!(r instanceof java.util.List)) return;
+                        java.util.List<?> list = (java.util.List<?>) r;
+                        for (int i = list.size() - 1; i >= 0; i--) {
+                            Object ti = list.get(i);
+                            if (ti == null) continue;
+                            try {
+                                Object base = ti.getClass().getField("baseActivity").get(ti);
+                                if (base == null) continue;
+                                Object pn = base.getClass().getField("packageName").get(base);
+                                if (pn instanceof String && isStealthClass((String) pn)) list.remove(i);
+                            } catch (Throwable t2) {}
+                        }
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑳ checkSignatures：拿模块签名和自己比对，能确认「这手机上装了个可疑模块」
+            try {
+                Class<?> pm7 = Class.forName("android.app.ApplicationPackageManager");
+                XpBridge.hookAllMethods(pm7, "checkSignatures", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a == null || a.length < 2) return;
+                            boolean hit = false;
+                            for (Object x : a) {
+                                if (x instanceof String && isStealthClass((String) x)) hit = true;
+                            }
+                            if (hit) p.setResult(android.content.pm.PackageManager.SIGNATURE_NO_MATCH);
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ㉑ getCallingPackage / getCallingActivity：跨进程调用时能看到模块
+            try {
+                Class<?> act = Class.forName("android.app.Activity");
+                XpCallback callPkg = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        try {
+                            Object r = p.getResult();
+                            if (r instanceof String && isStealthClass((String) r)) p.setResult(null);
+                        } catch (Throwable t) {}
+                    }
+                };
+                XpBridge.hookAllMethods(act, "getCallingPackage", callPkg);
+                XpBridge.hookAllMethods(act, "getCallingActivity", callPkg);
+            } catch (Throwable t) {}
+
+            // ㉒ Build.TAGS / Build.TYPE：ro.debuggable / test-keys 常被当 root 信号
+            try {
+                Class<?> build = Class.forName("android.os.Build");
+                XpBridge.hookAllMethods(build, "getRadioVersion", new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        Object r = p.getResult();
+                        if (r == null) p.setResult("");
+                    }
+                });
+            } catch (Throwable t) {}
+
+            // ⑥ NIO 读文件：有些人不用 BufferedReader，直接 Files.readAllBytes 读 /proc/self/maps
+            try {
+                Class<?> files = Class.forName("java.nio.file.Files");
+                XpBridge.hookAllMethods(files, "readAllBytes", new XpCallback() {
+                    @Override protected void beforeHookedMethod(XpParam p) {
+                        try {
+                            Object[] a = p.getArgs();
+                            if (a == null || a.length == 0 || a[0] == null) return;
+                            String low = String.valueOf(a[0]).toLowerCase();
+                            for (String sp : STEALTH_PATHS) {
+                                if (low.contains(sp.toLowerCase())) { p.setThrowable(new java.nio.file.AccessDeniedException(String.valueOf(a[0]))); return; }
+                            }
+                        } catch (Throwable t) {}
+                    }
+                });
+            } catch (Throwable t) {}
+
             emit(pkg, "stealth-on");
         } catch (Throwable t) { emit(pkg, "stealth-fail " + t); }
     }
 
     private void startCmdChannel(final String pkg, ClassLoader cl) {
         try {
-            Class<?> wv = XposedHelpers.findClass("android.webkit.WebView", cl);
+            Class<?> wv = XpBridge.findClass("android.webkit.WebView", cl);
             // 以前只 hook loadUrl —— 用 loadData / loadDataWithBaseURL 加载的页面完全抓不到。
             // 改成 hook 构造函数，任何 WebView 实例一创建就登记。
-            XposedBridge.hookAllConstructors(wv, new XC_MethodHook() {
-                protected void afterHookedMethod(MethodHookParam p) {
-                    if (p.thisObject != null) { synchronized (WVS) { WVS.add(new java.lang.ref.WeakReference<Object>(p.thisObject)); } }
+            XpBridge.hookAllConstructors(wv, new XpCallback() {
+                @Override protected void afterHookedMethod(XpParam p) {
+                    if (p.getThisObject() != null) { synchronized (WVS) { WVS.add(new java.lang.ref.WeakReference<Object>(p.getThisObject())); } }
                 }
             });
             // loadUrl 保留：有些 WebView 是系统内部复用的实例，构造函数可能早于模块加载
-            XposedBridge.hookAllMethods(wv, "loadUrl", new XC_MethodHook() {
-                protected void afterHookedMethod(MethodHookParam p) { if (p.thisObject != null) { synchronized (WVS) { WVS.add(new java.lang.ref.WeakReference<Object>(p.thisObject)); } } }
+            XpBridge.hookAllMethods(wv, "loadUrl", new XpCallback() {
+                @Override protected void afterHookedMethod(XpParam p) { if (p.getThisObject() != null) { synchronized (WVS) { WVS.add(new java.lang.ref.WeakReference<Object>(p.getThisObject())); } } }
             });
             // 腾讯 XWeb（微信/QQ 等用）：接口和标准 WebView 一致，同样登记
             try {
-                Class<?> xwv = XposedHelpers.findClass("com.tencent.xweb.WebView", cl);
-                XC_MethodHook xh = new XC_MethodHook() {
-                    protected void afterHookedMethod(MethodHookParam p) {
-                        if (p.thisObject != null) { synchronized (WVS) { WVS.add(new java.lang.ref.WeakReference<Object>(p.thisObject)); } }
+                Class<?> xwv = XpBridge.findClass("com.tencent.xweb.WebView", cl);
+                XpCallback xh = new XpCallback() {
+                    @Override protected void afterHookedMethod(XpParam p) {
+                        if (p.getThisObject() != null) { synchronized (WVS) { WVS.add(new java.lang.ref.WeakReference<Object>(p.getThisObject())); } }
                     }
                 };
-                XposedBridge.hookAllConstructors(xwv, xh);
-                XposedBridge.hookAllMethods(xwv, "loadUrl", xh);
+                XpBridge.hookAllConstructors(xwv, xh);
+                XpBridge.hookAllMethods(xwv, "loadUrl", xh);
                 emit(pkg, "xweb-hook-on");
             } catch (Throwable tx) { emit(pkg, "xweb-skip " + tx.getClass().getSimpleName()); }
             emit(pkg, "cmd-channel-on");
@@ -1173,7 +1659,12 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         // onDraw 不常触发，靠它保活不够；3 秒兜底一次，用 LAST_DRAWN_AW 打真页面
                         if (nowMs - lastForce > 3000L) { lastForce = nowMs; lastScripts.clear(); }
                         // 全局开关：控制目录里出现 off 文件就整段跳过，删掉即恢复
-                        if (new File(OFF_SWITCH).exists() || new File(OFF_SWITCH_ALT).exists()) continue;
+                        if (new File(OFF_SWITCH).exists() || new File(OFF_SWITCH_ALT).exists()) {
+                            // 关键：必须把 CURRENT_JS 置空。否则 onDraw 仍会拿旧值往页面贴，
+                            // 表现就是「关掉脚本后效果还残留」。刷新页面后才真正恢复。
+                            CURRENT_JS = null;
+                            continue;
+                        }
                         // 脚本来源：APK 内置的 + 用户自己放目录里的（同名以用户的为准）
                         try {
                             java.util.Map<String, String> all = new java.util.LinkedHashMap<String, String>();
@@ -1294,28 +1785,28 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         // 不再在这里覆盖 CURRENT_JS —— 那个槽现在由轮询线程统一维护成「所有启用脚本的拼接」
         emit("inject", "targets std=" + alive.size() + " chromium=" + nAw);
         for (final Object w : alive) {
-            try { XposedHelpers.callMethod(w, "post", new Object[]{ new Runnable() { public void run() { try { XposedHelpers.callMethod(w, "evaluateJavascript", new Object[]{ js, null }); } catch (Throwable t) {} } } }); } catch (Throwable t) {}
+            try { XpBridge.callMethod(w, "post", new Object[]{ new Runnable() { public void run() { try { XpBridge.callMethod(w, "evaluateJavascript", new Object[]{ js, null }); } catch (Throwable t) {} } } }); } catch (Throwable t) {}
         }
     }
 
     private void startChromiumInject(final String pkg, ClassLoader cl) {
         try {
-            Class<?> d = XposedHelpers.findClass("org.chromium.android_webview.AwContents", cl);
-            XC_MethodHook h = new XC_MethodHook() {
-                protected void afterHookedMethod(MethodHookParam p) {
+            Class<?> d = XpBridge.findClass("org.chromium.android_webview.AwContents", cl);
+            XpCallback h = new XpCallback() {
+                @Override protected void afterHookedMethod(XpParam p) {
                     try {
-                        Object aw = p.thisObject;
+                        Object aw = p.getThisObject();
                         if (aw != null) { synchronized (WCTABS) { WCTABS.add(new java.lang.ref.WeakReference<Object>(aw)); } emit(pkg, "aw-tab"); }
                     } catch (Throwable t) {}
                 }
             };
-            XposedBridge.hookAllConstructors(d, h);
+            XpBridge.hookAllConstructors(d, h);
             // 每次重绘都注入：页面实际在用的 AwContents 往往不是 WCTABS 里那几个（模块加载前就建好了），
             // 只有 onDraw 里的 thisObject 才是真在画的那个。
-            XC_MethodHook dh = new XC_MethodHook() {
-                protected void afterHookedMethod(MethodHookParam p) {
+            XpCallback dh = new XpCallback() {
+                @Override protected void afterHookedMethod(XpParam p) {
                     try {
-                        Object self = p.thisObject;
+                        Object self = p.getThisObject();
                         if (self == null) return;
                         LAST_DRAWN_AW = self;   // 记住它，定时兜底时用它注入
                         String cj = CURRENT_JS;
@@ -1324,12 +1815,12 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         long now = System.currentTimeMillis();
                         if (now - lastDrawInject < 800L) return;
                         lastDrawInject = now;
-                        evalAw(p.thisObject, cj);
+                        evalAw(p.getThisObject(), cj);
                     } catch (Throwable t) { }
                 }
             };
-            XposedBridge.hookAllMethods(d, "onDraw", dh);
-            XposedBridge.hookAllMethods(d, "onSizeChanged", dh);
+            XpBridge.hookAllMethods(d, "onDraw", dh);
+            XpBridge.hookAllMethods(d, "onSizeChanged", dh);
             emit(pkg, "chromium-hook-on");
         } catch (Throwable t) { emit(pkg, "chromium-hook-err " + t); }
     }
@@ -1438,15 +1929,20 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     // 总额度控制：日志不落盘，只走 XposedBridge.log，且条数封顶
     private static volatile boolean SILENT = false;
 
+    /** 强制日志：无视 SILENT，用于验证隐身这类「必须能看见」的关键节点。 */
+    private static void emitAlways(String pkg, String msg) {
+        try { XpBridge.log(TAG + " [" + pkg + "] " + msg); } catch (Throwable t) {}
+    }
+
     private static void emit(String pkg, String msg) {
         // DEBUG_LOG 优先于隐身静默：排查时把 debugLog 打开，隐身开着也能看日志
         if (SILENT && !DEBUG_LOG) return;
         int left = LEFT.decrementAndGet();
         if (left < 0) return;
         if (left == 0) {
-            try { XposedBridge.log(TAG + " budget exhausted"); } catch (Throwable t) {}
+            try { XpBridge.log(TAG + " budget exhausted"); } catch (Throwable t) {}
         }
-        try { XposedBridge.log(TAG + " [" + pkg + "] " + msg); } catch (Throwable t) {}
+        try { XpBridge.log(TAG + " [" + pkg + "] " + msg); } catch (Throwable t) {}
     }
     static class MiniJson {
         private final String s;

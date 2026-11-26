@@ -38,3 +38,4 @@ metapack/
 
 # 构建时生成
 srcs.txt
+backups/

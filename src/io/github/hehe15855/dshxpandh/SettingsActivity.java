@@ -271,16 +271,27 @@ public class SettingsActivity extends Activity {
      */
     boolean lspActive() {
         try { if (HookEntry.LOADED) return true; } catch (Throwable t) { }
+        // 经典 API（老框架）
         try { Class.forName("de.robv.android.xposed.XposedBridge"); return true; } catch (Throwable t) { }
+        // libxposed 新版 API（API 100+）：旧类不存在，但接口类一定在
+        try { Class.forName("io.github.libxposed.api.XposedInterface"); return true; } catch (Throwable t) { }
         return false;
     }
 
     /** 框架 API 版本；拿不到返回 -1 */
     int xposedApiVersion() {
+        // 经典 API：XposedBridge.getXposedVersion()
         try {
             Class<?> c = Class.forName("de.robv.android.xposed.XposedBridge");
             java.lang.reflect.Method m = c.getMethod("getXposedVersion");
             Object v = m.invoke(null);
+            if (v instanceof Integer) return ((Integer) v).intValue();
+        } catch (Throwable t) { }
+        // libxposed 新版：XposedInterface.API_102 是常量，直接读字段
+        try {
+            Class<?> c = Class.forName("io.github.libxposed.api.XposedInterface");
+            java.lang.reflect.Field f = c.getField("API_102");
+            Object v = f.get(null);
             if (v instanceof Integer) return ((Integer) v).intValue();
         } catch (Throwable t) { }
         return -1;
@@ -569,6 +580,96 @@ public class SettingsActivity extends Activity {
         try { return "1".equals(getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("debug", "")); } catch (Throwable t) { return false; }
     }
 
+    /**
+     * 导出日志：把本模块相关 logcat 抓出来写到控制目录。
+     * 学 Holmes 的做法：用户点一下就把现场带走，不用教他敲 adb。
+     */
+    void exportLog() {
+        final String out = new File(CTRL, "logcat-" + System.currentTimeMillis() + ".txt").getAbsolutePath();
+        toast("正在收集日志…");
+        new Thread(new Runnable() {
+            public void run() {
+                final StringBuilder sb = new StringBuilder();
+                sb.append("# DSHxpandh 日志导出 ").append(new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date())).append("\n");
+                sb.append("# 版本: ").append(versionName()).append("  设备: ").append(android.os.Build.MODEL).append("  Android ").append(android.os.Build.VERSION.RELEASE).append("\n");
+                sb.append("# 隐身: ").append(stealthOn() ? "开" : "关").append("  debug: ").append(debugLogOn() ? "开" : "关").append("\n\n");
+                // 用 su 读：普通 App 读不到别的进程日志（READ_LOGS 权限）
+                sb.append("=== 模块进程日志 ===\n");
+                sb.append(runCmd("su -c \"logcat -d -t 3000 | grep -i dshxpandh | tail -500\" 2>/dev/null"));
+                sb.append("\n=== 注入日志 ===\n");
+                sb.append(runCmd("su -c \"logcat -d -t 6000 | grep -E 'LSPosedFramework.*dshxpandh' | tail -800\" 2>/dev/null"));
+                sb.append("\n=== 崩溃/异常 ===\n");
+                sb.append(runCmd("su -c \"logcat -d -b crash -t 500 2>/dev/null | tail -100\" 2>/dev/null"));
+                sb.append("\n=== 状态 ===\n");
+                sb.append("控制目录: ").append(CTRL).append("\n");
+                sb.append("注入总开关: ").append(new File(CTRL, "off").exists() ? "已关" : "开").append("\n");
+                try {
+                    File[] fs = new File(CTRL).listFiles();
+                    if (fs != null) {
+                        sb.append("控制目录文件: ");
+                        for (File f : fs) sb.append(f.getName()).append(" ");
+                        sb.append("\n");
+                    }
+                } catch (Throwable t) {}
+                try {
+                    java.io.FileOutputStream fo = new java.io.FileOutputStream(out);
+                    fo.write(sb.toString().getBytes("UTF-8"));
+                    fo.close();
+                    runOnUiThread(new Runnable() { public void run() { toast("已导出到 " + out); } });
+                } catch (Throwable t) {
+                    final String err = t.toString();
+                    runOnUiThread(new Runnable() { public void run() { toast("导出失败: " + err); } });
+                }
+            }
+        }).start();
+    }
+
+    String runCmd(String cmd) {
+        try {
+            Process pr = Runtime.getRuntime().exec(new String[]{ "sh", "-c", cmd });
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(pr.getInputStream(), "UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            String ln;
+            while ((ln = r.readLine()) != null) sb.append(ln).append("\n");
+            r.close();
+            pr.waitFor();
+            return sb.toString();
+        } catch (Throwable t) { return ""; }
+    }
+
+    /**
+     * 清理日志痕迹。
+     * 模块本身在 KernelSU 白名单里（su 直接返回 uid=0），所以这里优先走 su：
+     * 普通 App 权限清不了 logcat（要 READ_LOGS），root 才行。没有 root 就只删自己的导出文件。
+     */
+    /**
+     * 清理日志痕迹，返回是否真的清干净了。
+     * 两步：① 删自己导出的文件（一定能删）② root 下清 logcat 并核对（要看真提权）。
+     */
+    boolean purgeLogTraces() {
+        int n = 0;
+        try {
+            File[] fs = new File(CTRL).listFiles();
+            if (fs != null) {
+                for (File f : fs) {
+                    String nm = f.getName();
+                    if (nm.startsWith("logcat-") && nm.endsWith(".txt")) { if (f.delete()) n++; }
+                }
+            }
+        } catch (Throwable t) {}
+        boolean logcatCleared = purgeLogcatAsRoot();
+        if (!logcatCleared) {
+            // 没有真 root：只能尽力而为，如实回报
+            runCmd("logcat -c 2>/dev/null");
+        }
+        lastPurgeOk = logcatCleared;
+        lastPurgeFiles = n;
+        return logcatCleared;
+    }
+
+    private boolean lastPurgeOk = false;
+    private int lastPurgeFiles = 0;
+
     void setDebugLog(boolean on) {
         File f = new File(CTRL, "debug");
         try {
@@ -577,7 +678,17 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) { }
         // 只删不建：状态唯一存在 prefs 里，文件那套是历史包袱，留着只会造成两套状态
         try { if (f.exists()) f.delete(); } catch (Throwable t) { }
-        toast(on ? "调试日志已开启，重启目标 App 后生效" : "已关闭");
+        if (!on) {
+            // 关闭即清痕迹：删掉导出过的日志文件 + 清 logcat，学 Holmes 的「用完即焚」
+            boolean cleared = purgeLogTraces();
+            toast(cleared
+                ? "调试日志已关闭，logcat 与导出文件已清空"
+                : "日志已关闭。导出文件已删，但 logcat 需要 root 才能清 —— 当前 su 未取得 uid=0");
+        } else {
+            toast("调试日志已开启，重启目标 App 后生效");
+        }
+        // 刷新卡片，让「导出」按钮的状态跟上
+        refresh();
     }
 
     /** QUERY_ALL_PACKAGES 是不是有效 */
@@ -679,6 +790,17 @@ public class SettingsActivity extends Activity {
         recreate();
     }
 
+    /** 公告页正文：13sp，跟帮助页一个字号。 */
+    TextView bodyLg(String s) {
+        TextView t = new TextView(this);
+        t.setText(s);
+        t.setTextSize(13);
+        t.setTextColor(SUB);
+        t.setLineSpacing(dp(4), 1.1f);
+        t.setPadding(0, dp(3), 0, dp(3));
+        return t;
+    }
+
     TextView body(String s) {
         TextView t = new TextView(this);
         t.setText(s);
@@ -689,7 +811,41 @@ public class SettingsActivity extends Activity {
         return t;
     }
 
-    /** 把 README.md 简单渲染成可读的段落（标题放大、表格用小字）。 */
+    /** 行内格式：**粗体** 去星号加粗、`代码` 变等宽强调色。返回带样式的文本。 */
+    CharSequence inlineFmt(String line, int baseColor, float sizeSp) {
+        android.text.SpannableStringBuilder b = new android.text.SpannableStringBuilder();
+        int p = 0;
+        while (p < line.length()) {
+            int b2 = line.indexOf("**", p);
+            int c2 = line.indexOf("`", p);
+            int next = -1;
+            boolean bold = false;
+            if (b2 >= 0 && (c2 < 0 || b2 < c2)) { next = b2; bold = true; }
+            else if (c2 >= 0) { next = c2; bold = false; }
+            if (next < 0) { b.append(line.substring(p)); break; }
+            if (next > p) b.append(line.substring(p, next));
+            if (bold) {
+                int close = line.indexOf("**", next + 2);
+                if (close < 0) { b.append(line.substring(next)); break; }
+                int s = b.length();
+                b.append(line.substring(next + 2, close));
+                b.setSpan(new android.text.style.StyleSpan(Typeface.BOLD), s, b.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                b.setSpan(new android.text.style.ForegroundColorSpan(TXT), s, b.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                p = close + 2;
+            } else {
+                int close = line.indexOf("`", next + 1);
+                if (close < 0) { b.append(line.substring(next)); break; }
+                int s = b.length();
+                b.append(line.substring(next + 1, close));
+                b.setSpan(new android.text.style.TypefaceSpan("monospace"), s, b.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                b.setSpan(new android.text.style.ForegroundColorSpan(ACC), s, b.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                p = close + 1;
+            }
+        }
+        return b;
+    }
+
+    /** 把 README.md 简单渲染成可读的段落（标题放大、表格淡色、行内格式去符号）。 */
     void renderDoc(LinearLayout root, String doc) {
         for (String raw : doc.split("\\n")) {
             String ln = raw.trim();
@@ -698,14 +854,25 @@ public class SettingsActivity extends Activity {
                 root.addView(gap, new LinearLayout.LayoutParams(-1, dp(6)));
                 continue;
             }
-            if (ln.startsWith("```") || ln.startsWith("---")) continue;
+            if (ln.startsWith("```") || ln.equals("---")) continue;
+            // 表格分隔行 |---|---| 没有信息，直接丢
+            if (ln.matches("^\\|?[\\s:|-]+\\|?$") && ln.indexOf("-") >= 0) continue;
             TextView v = new TextView(this);
             v.setTextColor(TXT);
-            if (ln.startsWith("### ")) { v.setText(ln.substring(4)); v.setTextSize(13); v.setTypeface(Typeface.DEFAULT_BOLD); }
-            else if (ln.startsWith("## ")) { v.setText(ln.substring(3)); v.setTextSize(15); v.setTypeface(Typeface.DEFAULT_BOLD); }
-            else if (ln.startsWith("# ")) { v.setText(ln.substring(2)); v.setTextSize(20); v.setTypeface(Typeface.DEFAULT_BOLD); }
-            else if (ln.startsWith("|")) { v.setText(ln); v.setTextSize(9); v.setTextColor(SUB); }
-            else { v.setText(ln); v.setTextSize(12); }
+            // 字号统一 13sp（与公告页、帮助页一致）。原来正文 12、表格 10，手机上看着费劲。
+            if (ln.startsWith("### ")) { v.setText(inlineFmt(ln.substring(4), TXT, 14)); v.setTextSize(14); v.setTypeface(Typeface.DEFAULT_BOLD); }
+            else if (ln.startsWith("## ")) { v.setText(inlineFmt(ln.substring(3), TXT, 16)); v.setTextSize(16); v.setTypeface(Typeface.DEFAULT_BOLD); }
+            else if (ln.startsWith("# ")) { v.setText(inlineFmt(ln.substring(2), TXT, 20)); v.setTextSize(20); v.setTypeface(Typeface.DEFAULT_BOLD); }
+            else if (ln.startsWith("|")) {
+                // 表格行：去掉首尾竖线，单元格用 · 分隔。表格天生挤，给 12sp 已是可读下限。
+                String cells = ln.replaceAll("^\\|", "").replaceAll("\\|$", "").replace("|", "  ·  ");
+                v.setText(inlineFmt(cells.trim(), SUB, 12));
+                v.setTextSize(12);
+                v.setTextColor(SUB);
+            }
+            else if (ln.startsWith("> ")) { v.setText(inlineFmt(ln.substring(2), SUB, 13)); v.setTextSize(13); v.setTextColor(SUB); }
+            else if (ln.startsWith("- ") || ln.startsWith("* ")) { v.setText(inlineFmt("  • " + ln.substring(2), TXT, 13)); v.setTextSize(13); }
+            else { v.setText(inlineFmt(ln, TXT, 13)); v.setTextSize(13); }
             v.setPadding(0, dp(2), 0, dp(2));
             root.addView(v);
         }
@@ -722,12 +889,16 @@ public class SettingsActivity extends Activity {
         root.setPadding(dp(16), dp(24), dp(16), dp(24));
         sv.addView(root);
         Button back = new Button(this);
-        back.setText("返回设置");
+        // 首次使用时（还没点「我已了解」）返回要回公告页，不能直接跳主界面
+        final boolean beforeAgree = !agreed();
+        back.setText(beforeAgree ? "返回" : "返回设置");
         back.setAllCaps(false);
         back.setTextColor(ACC);
         back.setBackgroundDrawable(box(CHIP, LINE, 8));
         back.setOnClickListener(new View.OnClickListener() {
-            public void onClick(View v) { buildMain(); }
+            public void onClick(View v) {
+                if (beforeAgree) showNotice(true); else buildMain();
+            }
         });
         root.addView(back, new LinearLayout.LayoutParams(-1, dp(44)));
         renderDoc(root, doc);
@@ -756,55 +927,33 @@ public class SettingsActivity extends Activity {
         sub.setPadding(0, dp(4), 0, dp(16));
         root.addView(sub);
 
-        // 公告第一块：怎么接入 DSH（给别人看的重点）
-        LinearLayout cDsh = card(root, "接入 DSH（可选）", "不装 DSH，本模块全部功能照常手工可用");
-        cDsh.addView(body("内置对接插件，打开本模块就自动释放到：" + CTRL + "/dsh-plugin/"));
-        cDsh.addView(body("在终端跑一条就装好：dsh plugin --profile web add " + CTRL + "/dsh-plugin"));
-        cDsh.addView(body("装好后 DSH 里就有 dshxpandh_status / dshxpandh_script / dshxpandh_inject / dshxpandh_logs 四个工具，agent 会自己知道什么时候用，不用每次提醒。设置页的「DSH 连接」卡片会显示装没装、连没连。"));
-        int recipeCount = 0;
-        try {
-            org.json.JSONObject cjN = caps();
-            if (cjN != null) recipeCount = cjN.optJSONArray("recipes") == null ? 0 : cjN.getJSONArray("recipes").length();
-        } catch (Throwable te) { }
-        cDsh.addView(body("DSH 会自己读到能力清单、" + recipeCount + " 个配方和全部操作说明，然后就能替你套配方、开关能力、下发命令。"));
-        cDsh.addView(body("想重新释放一次（比如升级后），到「设置」页点「安装到 DSH」。"));
-        cDsh.addView(body("重启 DSH 引擎后，聊天框上方会出现 DSHxpandh 状态条和面板（仅 dsh-go 手机版有这套界面）。"));
+        // 首屏只留必要的：怎么开始、能做什么、怎么接 DSH。
+        // 细节（能力分界、限制、排查、日志去向）都在「完整说明」那一页，不在这里堆。
+        LinearLayout c1 = card(root, "三步用起来");
+        c1.addView(bodyLg("1. LSPosed 里启用本模块，勾选目标 App"));
+        c1.addView(bodyLg("2. 重启那个 App（不是重启手机）"));
+        c1.addView(bodyLg("3. 回设置页选配方，或写自定义 hook"));
+        c1.addView(bodyLg("配置写到 " + CTRL + "/<包名>.json"));
 
-        LinearLayout c1 = card(root, "怎么用");
-        c1.addView(body("1. 在 LSPosed 里启用本模块，并勾选要 hook 的目标 App"));
-        c1.addView(body("2. 重启那个 App（不是重启手机）"));
-        c1.addView(body("3. 回到本页选配方或写自定义 hook"));
-        c1.addView(body("4. 配置写到 " + CTRL + "/<包名>.json"));
+        LinearLayout c2 = card(root, "能做六件事", "只管 Java 层");
+        c2.addView(bodyLg("抓明文 · 改参数 · 改结果 · 改网页 · 取登录态 · 调内部方法"));
+        c2.addView(bodyLg("native 的 .so 逻辑碰不到；改包重签、绕过加固壳也不在能力内。"));
 
-        LinearLayout c2 = card(root, "能力（详细）");
-        c2.addView(body("log · 抓明文"));
-        c2.addView(body("把 App 加密前的原始内容记下来。登录信息、请求参数都在里面。"));
-        c2.addView(body("args · 改参数"));
-        c2.addView(body("让它发出你指定的参数，例如换成另一台设备的标识。"));
-        c2.addView(body("return · 改结果"));
-        c2.addView(body("让某个判断固定成立，例如永远显示「已开通」。"));
-        c2.addView(body("js · 改网页"));
-        c2.addView(body("往浏览器页面里塞脚本：改标题、自动填表、去掉弹窗。"));
-        c2.addView(body("cookie · 取登录态"));
-        c2.addView(body("把网页的登录 Cookie 读出来。"));
-        c2.addView(body("call · 调方法"));
-        c2.addView(body("直接调用 App 内部的方法拿值，不用等它自己触发。"));
+        LinearLayout cDsh = card(root, "接入 DSH（可选）", "不装也照常手工用");
+        cDsh.addView(bodyLg("装了就能用对话配配方、下发脚本，不用自己翻文档。"));
+        cDsh.addView(bodyLg("对接插件会自动释放到 " + CTRL + "/dsh-plugin/，一条命令装好："));
+        cDsh.addView(bodyLg("dsh plugin --profile web add " + CTRL + "/dsh-plugin"));
 
-        // 限制从清单渲染，跟主界面同源，改 json 即同步
-        LinearLayout c4 = card(root, "限制（先看清）");
-        org.json.JSONObject cjLimN = caps();
-        if (cjLimN != null) {
-            try {
-                org.json.JSONArray ln = cjLimN.getJSONArray("limits");
-                for (int li = 0; li < ln.length(); li++) c4.addView(body((li + 1) + ". " + ln.getString(li)));
-            } catch (Throwable tn) {}
-        }
-
-        LinearLayout c3 = card(root, "务必知道");
-        c3.addView(body("本模块需要读写 /sdcard 才能放置配置与状态文件。"));
-        c3.addView(body("注入日志含明文与设备指纹，走 logcat（adb logcat | grep core 能看到），不落盘；LSPosed 若开了日志捕获才会另存到 /data/adb/lspd/log/。"));
-        c3.addView(body("关闭注入只停 JS 通道，已挂上的日志 hook 仍会生效。"));
-        c3.addView(body("只在你自己拥有或已获授权的设备上使用。"));
+        // 底部入口：详细说明单独一页，避免首屏信息过载
+        TextView more = new TextView(this);
+        more.setText("查看完整说明（能力分界 · 限制 · 排查） ›");
+        more.setTextSize(13);
+        more.setTextColor(ACC);
+        more.setPadding(0, dp(14), 0, dp(10));
+        more.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { showDoc(); }
+        });
+        root.addView(more);
 
         final LinearLayout noticeRoot = root;
         if (Build.VERSION.SDK_INT >= 20) {
@@ -1455,8 +1604,33 @@ public class SettingsActivity extends Activity {
             @Override public void onCheckedChanged(CompoundButton v, boolean checked) { setDebugLog(checked); }
         });
         dRow.addView(swD);
-        cD.addView(body("打开后，即使隐身开着也会把 hook 过程写进 logcat（adb logcat | grep core 能看到）。"));
-        cD.addView(body("关闭后立刻不再写入新日志；已经产生的记录在 LSPosed 的日志里，模块不碰那个目录。"));
+        cD.addView(body("打开后，即使隐身开着也会把 hook 过程写进 logcat。"));
+        cD.addView(body("关闭时会自动清掉导出的日志文件并清空 logcat，不留痕迹。"));
+        LinearLayout eRow = row(cD);
+        Button bExp = ghost(eRow, "导出日志");
+        bExp.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) { exportLog(); }
+        });
+        Button bPurge = ghost(eRow, "立即清痕迹");
+        bPurge.setOnClickListener(new View.OnClickListener() {
+            public void onClick(View v) {
+                toast("正在清理…");
+                new Thread(new Runnable() {
+                    public void run() {
+                        final boolean ok = purgeLogTraces();
+                        final int nf = lastPurgeFiles;
+                        runOnUiThread(new Runnable() {
+                            public void run() {
+                                toast(ok
+                                    ? "已清理：删除 " + nf + " 个导出文件，logcat 已清空"
+                                    : "已删 " + nf + " 个导出文件；logcat 未清空（su 未取得 uid=0）");
+                            }
+                        });
+                    }
+                }).start();
+            }
+        });
+        cD.addView(body("导出会写到控制目录 logcat-<时间>.txt，含模块日志、注入日志和状态快照。"));
 
         LinearLayout cA = card(pr[4], "外观", "背景色跟随系统或自己选");
         LinearLayout seg = row(cA);
@@ -1552,8 +1726,9 @@ public class SettingsActivity extends Activity {
         Button bRestore = ghost(cSc, "恢复被移除的内置脚本");
         bRestore.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                // 只做一件事：把「移除」过的内置脚本重新显示出来、恢复默认开关。
+                // 只做一件事：把「移除」过的内置脚本重新显示出来、开关恢复默认。
                 // 不往 /sdcard 导副本 —— 内置脚本本来就在 APK 里，导出来只会让列表出现重复的两套。
+                // 默认值已在 HookEntry.isScriptOff 里改成「全部关闭」，所以删记录 = 全关。
                 int n = 0;
                 try {
                     android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
@@ -1567,7 +1742,7 @@ public class SettingsActivity extends Activity {
                     ed.commit();
                 } catch (Throwable t) { }
                 rebuildScripts();
-                toast(n > 0 ? "已恢复 " + n + " 项" : "没有需要恢复的");
+                toast(n > 0 ? "已恢复 " + n + " 项，开关默认关闭" : "开关已全部关闭");
             }
         });
 
@@ -2731,6 +2906,22 @@ public class SettingsActivity extends Activity {
     }
 
     /** 开关状态统一存 prefs：/sdcard 上的 scripts 目录属主是 DSH，模块 uid（10381）写不进去 */
+    /** 同步 scripts/ 下的 .off/.on 标记，让 DSH 侧和设置页看到同一个状态。写不进去就跳过。 */
+    void syncScriptMark(String name, boolean on) {
+        try {
+            File off = new File(SCRIPTS, name + ".off");
+            File onf = new File(SCRIPTS, name + ".on");
+            if (on) {
+                if (off.exists()) off.delete();
+                if (onf.exists()) onf.delete();
+            } else {
+                File d = new File(SCRIPTS); if (!d.exists()) d.mkdirs();
+                if (!off.exists()) off.createNewFile();
+                if (onf.exists()) onf.delete();
+            }
+        } catch (Throwable t) { }
+    }
+
     void saveScriptPref(String name, boolean on) {
         try {
             // 两个键必须互斥：builtinOn 先查 scriptOn，旧键不清就永远读成「开」
@@ -2748,14 +2939,7 @@ public class SettingsActivity extends Activity {
 
     void toggleScript(String name, boolean on) {
         saveScriptPref(name, on);
-        try {
-            File f = new File(SCRIPTS, name + ".off");
-            if (on) { if (f.exists()) f.delete(); }
-            else {
-                File d = new File(SCRIPTS); if (!d.exists()) d.mkdirs();
-                if (!f.exists()) f.createNewFile();
-            }
-        } catch (Throwable t) { }
+        syncScriptMark(name, on);
         toast(name + (on ? " 已启用" : " 已停用"));
         rebuildScripts();
     }
@@ -2822,9 +3006,13 @@ public class SettingsActivity extends Activity {
                 String nm = k.substring(7);
                 if (nm.length() == 0) continue;
                 saveScriptPref(nm, on);
+                syncScriptMark(nm, on);
             }
         } catch (Throwable t) { }
-        // ③ scripts 目录里的文件（读不到就跳过，不影响前两类）
+        // ③ scripts 目录里的文件（用户自己丢进来的）
+        //    除了写 prefs，还要同步 .off/.on 标记 —— 那两个在 HookEntry.isScriptOff 里优先级最高，
+        //    不清掉的话「全部开启」会被残留的 .off 压回去，表现就是按钮点了没反应。
+        //    （模块 uid 写不进 /sdcard 的 scripts，失败就算了，prefs 仍然生效）
         try {
             File[] fs = new File(SCRIPTS).listFiles();
             if (fs != null) {
@@ -2832,6 +3020,7 @@ public class SettingsActivity extends Activity {
                     String n = f.getName();
                     if (n == null || !n.endsWith(".js")) continue;
                     saveScriptPref(n, on);
+                    syncScriptMark(n, on);
                 }
             }
         } catch (Throwable t) { }
@@ -2868,7 +3057,7 @@ public class SettingsActivity extends Activity {
             if ("1".equals(p.getString("scriptOn:" + name, ""))) return true;
             if ("1".equals(p.getString("scriptOff:" + name, ""))) return false;
         } catch (Throwable t) { }
-        return "示例1-链接标红.js".equals(name);   // 默认只开这个演示
+        return false;   // 默认全部关闭，与 HookEntry.isScriptOff 保持一致
     }
 
     void setBuiltinOn(String name, boolean on) {
@@ -3250,23 +3439,163 @@ public class SettingsActivity extends Activity {
      * 打开完整帮助。直接读 assets 里的 HELP.md（不依赖先导出到控制目录），
      * 用可滚动对话框展示——手机上长文档只能这样看。
      */
+    /**
+     * 极简 Markdown → Spannable。只处理这份文档里实际用到的语法，
+     * 不引第三方库：标题、粗体、行内代码、引用块、分割线、有序/无序列表。
+     * 目的只有一个 —— 别让用户看到 `#` 和 `**` 这种源码符号。
+     */
+    android.text.SpannableStringBuilder renderMarkdown(String src) {
+        android.text.SpannableStringBuilder out = new android.text.SpannableStringBuilder();
+        String[] lines = src.replace("\r\n", "\n").split("\n", -1);
+        boolean inCode = false;
+        for (int i = 0; i < lines.length; i++) {
+            String raw = lines[i];
+            String line = raw.trim();
+            int start = out.length();
+
+            if (line.length() == 0) { out.append("\n"); continue; }
+
+            // 代码块围栏：只去掉围栏本身，块内原样保留
+            if (line.startsWith("```")) { inCode = !inCode; continue; }
+            if (inCode) {
+                out.append(line).append("\n");
+                out.setSpan(new android.text.style.TypefaceSpan("monospace"), start, out.length() - 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                out.setSpan(new android.text.style.ForegroundColorSpan(ACC), start, out.length() - 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                continue;
+            }
+
+            // 分割线：--- / *** / ___
+            if (line.matches("^([-*_])\1{2,}$")) {
+                out.append("────────────────────\n");
+                out.setSpan(new android.text.style.ForegroundColorSpan(LINE), start, out.length(),
+                        android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                continue;
+            }
+
+            // 先剥引用前缀，再判标题："> ## xxx" 这种引用里嵌标题也要认
+            boolean quote = line.startsWith(">");
+            if (quote) {
+                line = line.substring(1).trim();
+                if (line.startsWith(">")) line = line.substring(1).trim();
+            }
+
+            // 标题 # ~ ######
+            int h = 0;
+            while (h < line.length() && line.charAt(h) == '#') h++;
+            if (h > 0 && h < line.length() && line.charAt(h) == ' ') {
+                String t = line.substring(h + 1).trim();
+                out.append(t).append("\n");
+                int end = out.length() - 1;
+                float sz = h == 1 ? 17f : (h == 2 ? 15f : 13.5f);
+                out.setSpan(new android.text.style.AbsoluteSizeSpan((int) (sz * getResources().getDisplayMetrics().scaledDensity)), start, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                out.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                out.setSpan(new android.text.style.ForegroundColorSpan(h <= 2 ? TXT : ACC), start, end, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                continue;
+            }
+
+            // 列表：1. / - / *
+            boolean bullet = false;
+            if (line.matches("^\\d+\\.\\s+.*")) {
+                int dot = line.indexOf('.');
+                String num = line.substring(0, dot + 1);
+                out.append("  ").append(num).append(" ");
+                line = line.substring(dot + 1).trim();
+                bullet = true;
+            } else if (line.startsWith("- ") || line.startsWith("* ")) {
+                out.append("  • ");
+                line = line.substring(2).trim();
+                bullet = true;
+            } else if (quote) {
+                out.append("│ ");
+            }
+
+            // 行内：**粗体** / `代码`
+            int p = 0;
+            while (p < line.length()) {
+                int b = line.indexOf("**", p);
+                int c = line.indexOf("`", p);
+                int next = -1;
+                boolean isBold = false;
+                if (b >= 0 && (c < 0 || b < c)) { next = b; isBold = true; }
+                else if (c >= 0) { next = c; isBold = false; }
+                if (next < 0) { out.append(line.substring(p)); break; }
+                if (next > p) out.append(line.substring(p, next));
+                if (isBold) {
+                    int close = line.indexOf("**", next + 2);
+                    if (close < 0) { out.append(line.substring(next)); break; }
+                    String inner = line.substring(next + 2, close);
+                    int s2 = out.length();
+                    out.append(inner);
+                    out.setSpan(new android.text.style.StyleSpan(android.graphics.Typeface.BOLD), s2, out.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    p = close + 2;
+                } else {
+                    int close = line.indexOf("`", next + 1);
+                    if (close < 0) { out.append(line.substring(next)); break; }
+                    String inner = line.substring(next + 1, close);
+                    int s2 = out.length();
+                    out.append(inner);
+                    out.setSpan(new android.text.style.ForegroundColorSpan(ACC), s2, out.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    out.setSpan(new android.text.style.TypefaceSpan("monospace"), s2, out.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+                    p = close + 1;
+                }
+            }
+
+            if (quote) {
+                out.setSpan(new android.text.style.ForegroundColorSpan(SUB), start, out.length(), android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+            }
+            out.append("\n");
+        }
+        return out;
+    }
+
     void openHelp() {
         String txt = readAsset("HELP.md");
         if (txt == null || txt.length() == 0) txt = "帮助文档读取失败。可以在控制目录里找 HELP.md。";
         android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        // 背景必须跟模块主题一致：对话框默认吃系统主题，浅色系统下是白底，
+        // 而 TXT 是深色主题的浅色字 —— 白底浅字就是「文字和背景一个颜色」。
+        sv.setBackgroundColor(BG);
         TextView tv = new TextView(this);
-        tv.setText(txt);
+        tv.setText(renderMarkdown(txt));
         tv.setTextSize(13);
         tv.setLineSpacing(dp(4), 1.1f);
         tv.setPadding(dp(16), dp(16), dp(16), dp(16));
         tv.setTextColor(TXT);
+        tv.setBackgroundColor(BG);
         sv.addView(tv);
-        new android.app.AlertDialog.Builder(this)
+        android.app.AlertDialog dlg = new android.app.AlertDialog.Builder(this)
                 .setTitle("帮助与排查")
                 .setView(sv)
                 .setPositiveButton("知道了", null)
-                .show();
+                .create();
+        dlg.setOnShowListener(d -> {
+            try {
+                android.view.Window w = dlg.getWindow();
+                if (w != null) {
+                    w.setBackgroundDrawable(dialogBg());
+                    // 标题与按钮文字也要跟着走，否则同样是白底浅字
+                    int id = getResources().getIdentifier("alertTitle", "id", "android");
+                    if (id != 0) {
+                        android.view.View t = w.findViewById(id);
+                        if (t instanceof TextView) ((TextView) t).setTextColor(TXT);
+                    }
+                    android.widget.Button pb = dlg.getButton(android.app.AlertDialog.BUTTON_POSITIVE);
+                    if (pb != null) pb.setTextColor(ACC);
+                }
+            } catch (Throwable t) { }
+        });
+        dlg.show();
     }
+    /** 对话框背景：主题底色 + 圆角，替代系统默认（系统默认会跟系统主题走，跟模块主题打架）。 */
+    android.graphics.drawable.Drawable dialogBg() {
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        g.setColor(BG);
+        g.setCornerRadius(dp(16));
+        g.setStroke(dp(1), LINE);
+        return g;
+    }
+
     void redetectDsh() {
         if (dshStateView == null) return;
         if (!dshInstalled()) {
@@ -3499,6 +3828,45 @@ public class SettingsActivity extends Activity {
             if (p != null) { try { p.destroy(); } catch (Throwable t2) { } }
             return null;
         }
+    }
+
+    /**
+     * 真正验证提权：跑 `su -c id` 看输出里有没有 uid=0。
+     * 为什么不能只看退出码 —— 有些 KernelSU/Magisk 配置下 su 会静默回落到 App 自己的 uid，
+     * 退出码是 0、命令也跑了，但身份没变。那种情况下一旦依赖它去清 logcat，会「成功」却什么都没清。
+     */
+    boolean verifyRealRoot() {
+        try {
+            String out = runRoot("id", 5000L);
+            if (out == null) return false;
+            boolean ok = out.contains("uid=0");
+            rootVerified = ok;
+            rootKnown = true;
+            return ok;
+        } catch (Throwable t) {
+            rootKnown = true;
+            return false;
+        }
+    }
+
+    /** 在 root 下清 logcat，并核对真的清掉了（清前后行数对比）。 */
+    boolean purgeLogcatAsRoot() {
+        if (!verifyRealRoot()) return false;
+        try {
+            // 清前计数
+            String before = runRoot("logcat -d -t 20 2>/dev/null | wc -l", 6000L);
+            int nb = 0;
+            try { nb = Integer.parseInt(String.valueOf(before).trim()); } catch (Throwable t) {}
+            // 清 all buffer（main/system/crash 都清）
+            runRoot("logcat -b all -c", 8000L);
+            // 清后计数
+            Thread.sleep(300L);
+            String after = runRoot("logcat -d -t 20 2>/dev/null | wc -l", 6000L);
+            int na = 0;
+            try { na = Integer.parseInt(String.valueOf(after).trim()); } catch (Throwable t) {}
+            // 清成功 = 清后明显变少（允许残留几行新产生的）
+            return na < nb || na <= 1;
+        } catch (Throwable t) { return false; }
     }
 
     /* ───────── 以下只在有 Root 时可用 ───────── */
@@ -3974,8 +4342,13 @@ public class SettingsActivity extends Activity {
         @Override public void run() {
             new Thread(new Runnable() {
                 @Override public void run() {
-                    // 只跑 true，不产生副作用；能拿到退出码 0 就是有 root
-                    boolean ok = runRoot("true", 3000L) != null;
+                    // 必须看 uid=0，不能只看退出码：
+                    // 有些 KernelSU/Magisk 配置下 su 会静默回落到 App 自己的 uid，退出码照样是 0。
+                    // 之前这里只判 `runRoot("true") != null`，于是界面显示「已授予」，
+                    // 但实际去清 logcat / 读 /data/adb 时全部失败 —— 判定与现实脱节。
+                    String idOut = runRoot("id", 4000L);
+                    boolean ok = idOut != null && idOut.contains("uid=0");
+                    rootVerified = ok;
                     rootKnown = true;
                     final boolean changed = (ok != rootAvailable);
                     if (changed) {
@@ -4217,6 +4590,76 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) {}
     }
 
+    /**
+     * 写文档。三种情况：
+     *  - 文件不存在          → 写
+     *  - stale（APK 升过版） → 写（用户手改的会被新版覆盖，这是升级的代价）
+     *  - 未 stale 但内容不同 → 只在本地是「旧版我们自己的产物」时才写，避免同版本修文案后永远不更新
+     *
+     * 「本地是不是我们的产物」用 .spec-manifest 里记的 sha 判断：不在清单里 = 用户手改，保留。
+     */
+    void writeDoc(File f, String content, boolean stale) {
+        if (content == null || content.length() == 0) return;
+        if (!f.exists()) { writeIfChanged(f, content); return; }
+        if (stale) { writeIfChanged(f, content); return; }
+        String cur = readText(f);
+        if (cur != null && cur.equals(content)) return;
+        // 同版本但内容不同：只有「本地文件和我们上次写的一致」才更新
+        String prev = manifestGet(f.getName());
+        if (prev != null && prev.equals(sha1(cur))) writeIfChanged(f, content);
+    }
+
+    /** 读文本文件；失败返回 null。 */
+    String readText(File f) {
+        try {
+            byte[] b = new byte[(int) f.length()];
+            java.io.FileInputStream in = new java.io.FileInputStream(f);
+            int off = 0;
+            while (off < b.length) {
+                int r = in.read(b, off, b.length - off);
+                if (r <= 0) break;
+                off += r;
+            }
+            in.close();
+            return new String(b, "UTF-8");
+        } catch (Throwable t) { return null; }
+    }
+
+    String sha1(String s) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-1");
+            byte[] d = md.digest(s.getBytes("UTF-8"));
+            StringBuilder sb = new StringBuilder();
+            for (byte x : d) sb.append(String.format("%02x", x));
+            return sb.toString();
+        } catch (Throwable t) { return ""; }
+    }
+
+    /** .spec-manifest 是「上次导出时各文件的 sha1」，一行一个 name:sha。 */
+    String manifestGet(String name) {
+        try {
+            File mf = new File(CTRL, ".spec-manifest");
+            if (!mf.exists()) return null;
+            String t = readText(mf);
+            if (t == null) return null;
+            for (String line : t.split("\n")) {
+                int i = line.indexOf(':');
+                if (i > 0 && line.substring(0, i).equals(name)) return line.substring(i + 1).trim();
+            }
+            return null;
+        } catch (Throwable t) { return null; }
+    }
+
+    void manifestPut(java.util.Map<String, String> entries) {
+        try {
+            StringBuilder sb = new StringBuilder();
+            for (java.util.Map.Entry<String, String> e : entries.entrySet()) {
+                sb.append(e.getKey()).append(':').append(e.getValue()).append('\n');
+            }
+            writeIfChanged(new File(CTRL, ".spec-manifest"), sb.toString());
+        } catch (Throwable t) {}
+    }
+
     /** 递归导出 assets 下的整棵目录树（用于内嵌的 DSH 插件）。 */
     void exportAssetTree(String assetDir, File outDir) {
         String[] items = null;
@@ -4247,12 +4690,41 @@ public class SettingsActivity extends Activity {
                 capObj.put("version", versionName());
                 capJson = capObj.toString(2);
             } catch (Throwable t) { }
-            writeIfChanged(new File(d, "capabilities.json"), capJson);
-            writeIfChanged(new File(d, "DSH-GUIDE.md"), readAsset("DSH-GUIDE.md"));
-            writeIfChanged(new File(d, "HELP.md"), readAsset("HELP.md"));
-            writeIfChanged(new File(d, "写脚本指南.md"), readAsset("写脚本指南.md"));
+            // 只在「还没有」或「本地版本旧于 APK」时才写，避免每次 onResume 冲掉用户手改的文档。
+            // 版本戳放在 .spec-rev，内容 = APK versionName；用户改了本地文件但没升 APK 就保留。
+            String apkVer = versionName();
+            File revFile = new File(d, ".spec-rev");
+            String localRev = "";
+            try {
+                if (revFile.exists()) {
+                    byte[] rb = new byte[(int) revFile.length()];
+                    java.io.FileInputStream rin = new java.io.FileInputStream(revFile);
+                    int roff = 0;
+                    while (roff < rb.length) {
+                        int rr = rin.read(rb, roff, rb.length - roff);
+                        if (rr <= 0) break;
+                        roff += rr;
+                    }
+                    rin.close();
+                    localRev = new String(rb, "UTF-8").trim();
+                }
+            } catch (Throwable t) { }
+            boolean specStale = !localRev.equals(apkVer);
+            writeDoc(new File(d, "capabilities.json"), capJson, specStale);
+            writeDoc(new File(d, "DSH-GUIDE.md"), readAsset("DSH-GUIDE.md"), specStale);
+            writeDoc(new File(d, "HELP.md"), readAsset("HELP.md"), specStale);
+            writeDoc(new File(d, "写脚本指南.md"), readAsset("写脚本指南.md"), specStale);
             exportAssetTree("dsh-plugin", new File(d, "dsh-plugin"));
-            writeIfChanged(new File(d, "dshxpandh-clean.sh"), readAsset("dshxpandh-clean.sh"));
+            writeDoc(new File(d, "dshxpandh-clean.sh"), readAsset("dshxpandh-clean.sh"), specStale);
+            if (specStale) writeIfChanged(revFile, apkVer);
+            // 记录这次写出去的内容指纹，供下次判断「本地这份还是不是我们写的」
+            java.util.Map<String, String> mf = new java.util.HashMap<String, String>();
+            String[] names = { "capabilities.json", "DSH-GUIDE.md", "HELP.md", "写脚本指南.md", "dshxpandh-clean.sh" };
+            for (String nm : names) {
+                String t = readText(new File(d, nm));
+                if (t != null) mf.put(nm, sha1(t));
+            }
+            manifestPut(mf);
             String[] rs = null;
             try { rs = getAssets().list("recipes"); } catch (Throwable t0) {}
             if (rs != null && rs.length > 0) {

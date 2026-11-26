@@ -1,6 +1,6 @@
 id=io.github.hehe15855.dshxpandh
 name=DSHxpandh
-version=v13.0.2
-versionCode=160
+version=v13.1.0
+versionCode=161
 author=hehe15855
-description=让手机上的 AI 助手能看见、也能改别的 App：hook Java 方法拿到加解密明文、改参数和返回值、调内部方法、读 Cookie，或者往网页里注入 JS（标准 WebView / 腾讯 XWeb / Chromium 都支持）。包里自带 DSH 插件，装进 DSH 就有 dshxpandh_status、dshxpandh_script、dshxpandh_inject、dshxpandh_logs 四个工具；不装 DSH 也能照常手工用。
+description=在别的 App 运行的时候动手：改方法返回值、记加解密明文、往网页注入 JS、解浏览器 Cookie。标准 WebView / 腾讯 XWeb / Chromium 三种内核都支持，自带 13 个配方和 9 个脚本。可接入 DSH 拓展把手工配置变成对话，不接也能用。边界：只管 Java 层，native 的 .so 碰不到。

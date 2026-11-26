@@ -19,7 +19,32 @@ let t = fs.readFileSync(p, 'utf8')
 const before = t
 t = t.replace(/^version=.*$/m, 'version=v' + vn)
 t = t.replace(/^versionCode=.*$/m, 'versionCode=' + vc)
-if (desc) t = t.replace(/^description=.*$/m, 'description=' + desc)
+
+// description 可能是多行（texts/description.txt 里有空行分段）。
+// 旧写法 /^description=.*$/m 只吃第一行，多行的续行没人管 —— 每编译一次就叠一层，
+// 最后 module.prop 里堆了 8 份同样的段落。这里先整段删干净（description= 及其后续行），
+// 再一次性写入。
+if (desc) {
+  const lines = t.split(NL)
+  const kept = []
+  let inDesc = false
+  for (const ln of lines) {
+    if (ln.startsWith('description=')) { inDesc = true; continue }
+    // 续行 = 不带 key=value 结构的非空行
+    if (inDesc) {
+      if (ln.trim() === '') continue            // 描述里的空行
+      if (!/^[A-Za-z_][A-Za-z0-9_]*=/.test(ln)) continue  // 裸续行
+      inDesc = false
+    }
+    kept.push(ln)
+  }
+  // 插到 author 之后（没有就追加到末尾）
+  const idx = kept.findIndex((x) => x.startsWith('author='))
+  const entry = 'description=' + desc
+  if (idx >= 0) kept.splice(idx + 1, 0, entry)
+  else kept.push(entry)
+  t = kept.join(NL).replace(/\s*$/, '') + NL
+}
 if (t !== before) {
   fs.writeFileSync(p, t)
   console.log('sync-texts: module.prop -> v' + vn + ' (' + vc + ')' + (desc ? ' + description ' + desc.length + ' 字' : ''))

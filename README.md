@@ -1,43 +1,34 @@
 # DSHxpandh
 
 [![LSPosed](https://img.shields.io/badge/LSPosed-API%2093%2B-blue)](https://github.com/LSPosed/LSPosed)
-[![Android](https://img.shields.io/badge/Android-8.0%2B-green)](https://developer.android.com)
+[![Android](https://img.shields.io/badge/Android-8.0%20~%2016-green)](https://developer.android.com)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/hehe15855/DSHGoXpandh)](https://github.com/hehe15855/DSHGoXpandh/releases/latest)
 
-> 给 DSH Go 做的扩展模块。DSH Go 是跑在手机里的 agent，这个模块给它在别的 App 里开一扇窗：能看见 App 内部发生了什么，也能动手改。
+> **在别的 App 里开一扇窗。** 看得见它内部发生了什么，也能动手改——不用改包、不用重签，装一次常驻生效。
 
-DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了什么请求、浏览器页面长什么样、某个按钮背后的值是什么。
+Android 上想改一个 App 的行为，常见做法是拆包、改 smali、重签名。慢，而且装回去就是另一个包了。
 
-这个模块补上这一块。它挂在 LSPosed 上，把目标 App 的运行时能力**开一个口子**给 DSH Go：
+这个模块换了条路：挂在 LSPosed 上，在**目标 App 运行的时候**动手。改方法返回值、记加解密明文、往网页里注入 JS、解浏览器 Cookie——配置写好，App 每次启动自动生效。
 
-- DSH Go 说「抓一下这个 App 的请求明文」→ 模块记录方法调用，写到控制目录
-- DSH Go 说「把页面里那个弹窗去掉」→ 模块往 WebView 注入 JS
-- DSH Go 说「换个设备 ID 试试」→ 模块替换返回值
-
-**hook 是手段，让 DSH Go 能干成事才是目的。**
+**它可以接入 DSH，把手工配置变成对话。** 不接也能用：配方和脚本都是纯文本，手写一样生效；接上之后，助手能自己读能力清单、配配方、下脚本，你说「把这个弹窗去掉」，它去做。
 
 ---
 
-## 它给 DSH Go 提供什么
+## 能做什么
 
-| 能力 | DSH Go 能用来做什么 |
-|---|---|
-| **log** 抓明文 | 看 App 请求的原文、加密前后的内容、API 返回 |
-| **args** 改参数 | 试不同的输入看 App 怎么反应 |
-| **return** 改结果 | 让某个判断成立/不成立，测分支逻辑 |
-| **js** 改网页 | 改页面内容、自动填表、去弹窗、读 DOM |
-| **cookie** 取登录态 | 拿网页 Cookie 做后续请求 |
-| **call** 调方法 | 直接问 App 内部要数据，不用等它自己触发 |
+六种模式，都是**运行时**生效，配好即用：
 
-## 怎么接
+| 模式 | 干什么 | 典型场景 |
+|---|---|---|
+| **log** 抓明文 | 记下方法的入参和返回值 | 看加密前原文、解密后明文、API 返回 |
+| **args** 改参数 | 替换方法收到的值 | 试不同输入，看 App 怎么反应 |
+| **return** 改结果 | 让方法固定返回你的值 | 让某个判断永远成立 / 不成立 |
+| **js** 改网页 | 往 WebView 注入脚本 | 改样式、去弹窗、自动填表、读 DOM |
+| **cookie** 取登录态 | 读 Cookie（含 HttpOnly） | 拿来做后续请求 |
+| **call** 调方法 | 直接调 App 内部方法 | 主动要数据，不用等它触发 |
 
-模块把能力清单和操作说明导出到**控制目录**——默认 `/sdcard/DSHxpandh/`；如果你本来就有 `/sdcard/DSHxpandh/`，会沿用它；两个都不行退回 `/sdcard/Download/DSHxpandh/`。DSH Go 读到 `DSH-GUIDE.md` 就知道全部接口，然后能自己完成这些事：
-
-```
-「我装了 DSHxpandh，接口在 /sdcard/DSHxpandh/，先读 DSH-GUIDE.md」
-```
-
-也自带一个 DSH 插件（`dsh-plugin/`），装上后聊天框上方会出现状态条和面板。
+自带 **13 个配方**（改设备 ID、伪装定位、关 SSL Pinning、关日志……）和 **9 个网页脚本**（去广告、倍速、解除复制限制……），自定义页可单独开关。改脚本不用重装模块，3 秒内自动重注入。
 
 ## 网页注入支持三种内核
 
@@ -49,11 +40,51 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 | 腾讯 XWeb | 微信、QQ |
 | Chromium `AwContents` | OPPO / Chrome / 夸克 / UC 等自带浏览器 |
 
-注入时机是**页面每次重绘 + 每 3 秒兜底**，页面重渲染后效果不会丢。
+注入时机是页面加载 + 每 12 秒兜底重注入，页面重渲染后效果不会丢。
+
+## 能力分界：哪件事该谁做
+
+模块只管 **Java 层**。判断错了会白忙——Java 层的事用反汇编改文件是弯路，native 的事配配方永远不生效。
+
+### 三层，怎么认
+
+| 层 | 是什么 | 怎么认 |
+|---|---|---|
+| **Java 层** | Java/Kotlin 编译成 dex，跑在 ART 上 | jadx 能反编译出类名方法名；堆栈里有 `com.xxx.Yyy.method(` |
+| **native 层** | C/C++ 编译成 .so，CPU 直接跑 | jadx 里只看到 `native` 声明，没有方法体 |
+| **WebView 层** | App 内嵌网页，跑 JS | 有 DOM、有 fetch，能用开发者工具的思路理解 |
+
+### 五步判断
+
+1. 是一个 **Java 方法**吗？→ 用**本模块**配配方
+2. 是**网页里的东西**（DOM / fetch / localStorage）？→ 用**本模块**丢 .js
+3. 是**磁盘上的文件**（数据库 / mmkv / prefs）？→ 都别用，**root 直接读**
+4. 逻辑在 **.so 里**？→ 用 **rizin / Ghidra** 改二进制
+5. 是要看/改**网络包**？→ 用 **tcpdump / mitmproxy**
+
+### 一句话判据
+
+> 这段逻辑能不能按「类名.方法名」找到？
+> 能找到 → **本模块**；只在 .so 里 → **改二进制**；数据已经在文件里 → **root 读**，两者都不用。
+
+### 模块做不到的
+
+- native 内部的自校验、算法、常量（Java 层看不到这次调用）
+- 改 APK 文件、永久生效的静态改造
+- 原生界面 / Flutter / Canvas 游戏（不是 WebView 渲染的）
+- 没在 LSPosed 里勾选过的 App
+
+### 谁都做不到的
+
+- 加固壳的 native 反调试：能试，成功率看壳的版本
+- TEE / 硬件密钥参与校验：拿不到就没法伪造
+- 服务端校验：本地改成什么样，上游不认照样拒
+
+> 完整结构化版本在 `capabilities.json` 的 `boundary` 字段，AI 助手读那个就能自动选路。
 
 ## 密钥页：Cookie 离线解密
 
-浏览器把登录态存在自己的 SQLite 库里，`encrypted_value` 是 AES-128-CBC 密文。模块的「密钥」页直接读出来解开，不装插件、不抓包。
+浏览器把登录态存在自己的 SQLite 库里，`encrypted_value` 是 AES-128-CBC 密文。模块的「密钥」页直接读出来解开，不抓包。
 
 | 形态 | 含义 | 处理 |
 |---|---|---|
@@ -61,23 +92,52 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 | 无前缀（`value` 列有值） | 明文，WebView 内核的库常见 | 直接读 |
 | `v20` | App-Bound，密钥在系统服务里、绑定应用身份 | 解不开，界面如实说明 |
 
-扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，扫到什么解什么。结果可导出到控制目录下的 `cookies.json` 交给 DSH Go。
-
-几个坑（代码注释里也写着）：
-
-- CBC 的 IV 不对只毁第一块，所以解密用 `NoPadding` 自己剥 PKCS#7；用 `PKCS5Padding` 会在首块错位时抛异常，把能解的值一起丢掉
-- Chrome 130+ 的明文前面垫了 32 字节 `SHA256(host_key)`，要先丢掉再取值
-- 临时库用完即删——里面是活的登录凭证
-
-## 内置脚本
-
-自带 9 个（3 示例 + 6 模板），「自定义」页可单独开关。**改脚本不用重装模块**——改完 3 秒内自动重注入。
+扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，扫到什么解什么。结果可导出到控制目录下的 `cookies.json`。
 
 ## 隐身
 
-默认开启，对目标 App 隐藏 15 类 Java 层特征。
+默认开启。挡住这些探测面：
 
-控制目录有开关关掉它——但**诚实的边界**是：只能挡 Java 层探测，native 直接读 `/proc/self/maps`、检查 ART 内存页属性这些，Java 层无能为力。
+- **类名与包名** —— `loadClass` 撞到 Xposed / LSPosed / libxposed 的任何类，直接抛 `ClassNotFoundException`
+- **系统属性与环境变量** —— 含 `XPOSED` / `LSPOSED` / `MAGISK` 之类的键返回 `null`
+- **可疑路径** —— `/data/adb/modules`、`/data/adb/lspd`、`xposedbridge.jar` 等，`exists` / `isFile` / `listFiles` 一律说没有
+- **包 / 进程 / 服务列表** —— 模块自己从 `getInstalledPackages`、`getRunningAppProcesses`、`getRunningServices`、`queryIntentActivities` 里消失
+- **堆栈与反射** —— `getStackTrace` 过滤框架帧，`getDeclaredMethods` 过滤 `$xposed` 成员
+- **注解** —— `getAnnotations` / `getDeclaredAnnotations` 去掉 xposed 相关注解
+- **进程启动** —— `Runtime.exec` 和 `ProcessBuilder.start` 都不允许跑指向可疑路径的命令
+- **文件读取** —— NIO 的 `Files.readAllBytes` 读可疑路径直接 `AccessDeniedException`
+- **调试器** —— `isDebuggerConnected` / `waitingForDebugger` 恒返回 false
+- **安装来源** —— 被问模块的 installer 时回 `com.android.vending`（侧载痕迹）
+
+控制目录有开关关掉它（`stealth.off`）——但**诚实的边界**是：只能挡 Java 层探测。
+native 侧直接读 `/proc/self/maps`、检查 ART 内存页属性、扫 vaddr 段这些，Java 层看不到也拦不住。
+专门的检测工具（如 Holmes、Rikka 类方案）从 native 走，仍能发现痕迹。
+
+## 安装
+
+1. 下载 [Releases](https://github.com/hehe15855/DSHGoXpandh/releases/latest) 里的 APK
+2. 装好后到 **LSPosed 管理器**启用本模块
+3. 勾选要操作的目标 App
+4. **重启那个 App**（不是重启手机）
+5. 打开本模块设置页，选配方或写自定义规则
+
+首次打开会引导授存储权限——不给也能进，但脚本和配方用不了（界面显示「受限模式」）。
+
+### 配合 AI 助手用（可选）
+
+模块会把能力清单和操作说明导出到**控制目录**（默认 `/sdcard/DSHxpandh/`）。助手读到 `DSH-GUIDE.md` 就知道全部接口：
+
+```
+我装了 DSHxpandh 模块，接口在 /sdcard/DSHxpandh/，先读 DSH-GUIDE.md
+```
+
+自带一个 DSH 插件（`dsh-plugin/`），装上后聊天框上方会有状态条和面板：
+
+```bash
+dsh plugin --profile web add /sdcard/DSHxpandh/dsh-plugin
+```
+
+装完重启一次引擎。不装插件也能用，只是要手动改文件。
 
 ## 兼容性
 
@@ -90,16 +150,25 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 | 架构 | 不限：纯 Java，无 native 库，armeabi-v7a / arm64-v8a / x86_64 通用 |
 | 已实测 | Android 15 + LSPosed 2.2.1 + KernelSU；其余版本按上表兼容，未逐一跑过 |
 
-## 安装
+## 常见问题
 
-1. 下载 [Releases](../../releases) 里的 APK
-2. 装好后到 **LSPosed 管理器**启用本模块
-3. 勾选要用 DSH Go 操作的目标 App
-4. **重启那个 App**（不是重启手机）
-5. 打开本模块设置页，选配方或写自定义规则
-6. 让 DSH Go 读 `DSH-GUIDE.md` 接管
+**改了配置不生效？**
+重启目标 App。只有控制目录里的开关（`.off` 文件）是热生效的。
 
-首次打开会引导授存储权限——不给也能进，但脚本和配方用不了（界面显示「受限模式」）。
+**找不到要 hook 的类名？**
+用 jadx 反编译看。类名被混淆过的话，按行为找（搜字符串常量、看堆栈）。
+
+**为什么有的 App 完全没反应？**
+没在 LSPosed 里勾选它。模块不会碰没勾选的进程。
+
+**网页注入没效果？**
+先确认那个页面是不是真的 WebView（不是原生控件、Flutter 或 Canvas 画的）。三种内核都支持，但原生 UI 改不了。
+
+**更新后文档变了？**
+控制目录的 `capabilities.json`、`DSH-GUIDE.md` 跟着 APK 版本走。你手改过的会保留，除非升了模块版本。
+
+**模块能被检测到吗？**
+能。隐身只挡 Java 层探测，专门的检测工具从 native 侧查仍能发现。
 
 ## 从源码构建
 
@@ -124,6 +193,8 @@ bash build.sh
 
 签名用同目录的 `debug.ks`（不在仓库里，自己放一个，或设 `KEYSTORE` 指向别处）。
 
+构建带两道审验闸门：源码审验（`audit.mjs --pre`）不过就中止，产物审验（`--post`）只告警。版本号自动从 Manifest 同步到 `HookEntry`、`module.prop`、`version.json`。
+
 ### 发布前核对
 
 ```bash
@@ -132,13 +203,13 @@ bash build.sh
 
 重编一次源码，然后比对两头的 `classes.dex`：本地 `mod_signed.apk` 里那份、线上最新 Release 的 asset 里那份。三行结论：
 
-1. **本地产物 = 当前源码** — 本地包是不是刚编出来的（不是 → 手上那份落后于源码）
+1. **本地产物 = 当前源码** — 本地包是不是刚编出来的
 2. **线上 Release = 当前源码** — 挂出去的是不是同一次构建
 3. **版本号** — release tag 和 manifest 的 `versionName`
 
-退出码 `0` 全绿 / `2` 有不一致 / `3` 取不到远端（取不到不算通过）。编前产物备份在 `/tmp/xmod-verify-<ts>/`。
+退出码 `0` 全绿 / `2` 有不一致 / `3` 取不到远端（取不到不算通过）。
 
-写它是为了 2026-11-26 那个上午：v12.9.0 的 Release 挂的是 `404fa31` 时代的包（dex `d16f299`），之后 `89e1a01` 把更新源从 jsDelivr 换成 GitHub API（jsDelivr 有 12 小时缓存，发新版后仍报旧版本），源码提交了但没重新打包 —— 线上那个包带着已经修好的 bug。只比文件名和字节数看不出来（两边都是 135138 字节）。
+写它是为了 2026-11-26 那个上午：v12.9.0 的 Release 挂的是旧代码的包，源码提交了却没重新打包。只比文件名和字节数看不出来（两边都是 135138 字节）。
 
 **发布了源码却没重打包，和跳过一个构建步骤是同一类错**：坏的地方不在构建，在「以为发布完了」。
 
@@ -151,9 +222,10 @@ src/…/DshxpandhProvider.java    跨进程配置通道
 src/…/AppPickerDialog.java  应用选择器
 src/…/ProbeService.java     探针服务
 src/…/CookieVault.java      Cookie 解密（v10 / 明文 / v20 检测）
-assets/scripts/             内置脚本
-assets/recipes/             内置配方
-assets/capabilities.json    能力清单（DSH Go 读这个）
+assets/scripts/             内置脚本（9 个）
+assets/recipes/             内置配方（13 个）
+assets/capabilities.json    能力清单 + 能力分界（助手读这个）
+assets/DSH-GUIDE.md         给助手的接口说明
 module.prop                 LSPosed / Magisk 模块信息
 CHANGELOG.md                更新日志
 LICENSE                     MIT
@@ -167,10 +239,6 @@ NOTES.md                    开发笔记（踩过的坑）
 ## 免责声明
 
 仅供学习研究与自有设备调试使用。请勿用于未授权的设备或违反服务条款的场景。
-
-## 更新日志
-
-见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## License
 

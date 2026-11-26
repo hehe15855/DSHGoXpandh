@@ -78,28 +78,37 @@ public class DshxpandhProvider extends ContentProvider {
                 out.putBoolean("v", p.contains(arg == null ? "" : arg));
             } else if ("getCmd".equals(method)) {
                 String pkg = arg == null ? "" : arg;
-                String v = p.getString("cmd", "");
-                if (v == null || v.length() == 0) {
-                    // 回落：控制目录里的共享命令文件。DSH 插件或手工都能写，不需要 root。
-                    String root = ctrlRoot();
-                    if (root != null && pkg.length() > 0) {
-                        java.io.File f = new java.io.File(root + "/c-" + cmdTag(pkg) + ".bin");
-                        try {
-                            if (f.exists() && f.length() > 0) {
-                                java.io.BufferedReader r = new java.io.BufferedReader(
-                                        new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
-                                StringBuilder sb = new StringBuilder();
-                                String ln;
-                                while ((ln = r.readLine()) != null) sb.append(ln);
-                                r.close();
-                                v = unx(sb.toString());
-                                // 读完立刻删：命令只该存续一次读取的时间窗
-                                try { f.delete(); } catch (Throwable t3) { }
-                            }
-                        } catch (Throwable t2) { }
-                    }
+                String v = "";
+                // 顺序很重要：先看共享命令文件（DSH 刚写进去的新指令），再回退 prefs（老机制）。
+                // 原来反过来 —— prefs 里只要有一丁点残留，共享通道就永远读不到，表现为「下发了没反应」。
+                String root = ctrlRoot();
+                if (root != null && pkg.length() > 0) {
+                    java.io.File f = new java.io.File(root + "/c-" + cmdTag(pkg) + ".bin");
+                    try {
+                        if (f.exists() && f.length() > 0) {
+                            java.io.BufferedReader r = new java.io.BufferedReader(
+                                    new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
+                            StringBuilder sb = new StringBuilder();
+                            String ln;
+                            while ((ln = r.readLine()) != null) sb.append(ln);
+                            r.close();
+                            v = unx(sb.toString());
+                            if (v == null) v = "";
+                            // 读完立刻删：命令只该存续一次读取的时间窗
+                            try { f.delete(); } catch (Throwable t3) { }
+                        }
+                    } catch (Throwable t2) { }
                 }
+                if (v.length() == 0) v = p.getString("cmd", "");
                 out.putString("v", v == null ? "" : v);
+            } else if ("setCmd".equals(method)) {
+                // 清空/改写 prefs 里那条命令。插件清命令时靠它，否则「清了却还在跑」。
+                // 用 __clear__ 做清空哨兵：`content call --arg ""` 会被当成语法错误，传不进空串。
+                String val = arg == null ? "" : arg;
+                SharedPreferences.Editor ed = p.edit();
+                if (val.length() == 0 || "__clear__".equals(val)) ed.remove("cmd");
+                else ed.putString("cmd", val);
+                out.putBoolean("ok", ed.commit());
             } else if ("getScripts".equals(method)) {
                 // 一次 IPC 把启用着的脚本全带走，省得每个脚本调一次
                 Bundle all = new Bundle();

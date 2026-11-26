@@ -1,8 +1,8 @@
 {
   "module": "DSHxpandh",
-  "version": "4.8",
+  "version": "13.1.0",
   "manifestVersion": 1,
-  "summary": "给 App 打 Java 层 hook。抓明文、改参数、改返回值、注网页脚本、读 Cookie、调内部方法。不碰 native，不需要 root。",
+  "summary": "给 App 打 Java 层 hook：抓明文、改参数、改返回值、注网页脚本、读 Cookie、调内部方法。不碰 native、不需要 root。哪些活该交给它、哪些该交给 shell，见 boundary。",
   "modes": [
     {
       "id": "log",
@@ -19,7 +19,7 @@
         "解密方向：入参是密文 → 返回值是明文（能直接看到解密结果）",
         "另外记：哈希值、Base64 前后、签名、密钥",
         "盯着的地方：Cipher / Mac / MessageDigest / Signature / Base64 / URLEncoder",
-        "每次记前后 300 字节，超了截断"
+        "每次记前后各 200 字节（配方可调，上限 512），超了截断"
       ]
     },
     {
@@ -63,7 +63,7 @@
       "limit": "只对 WebView 页面有效（原生界面改不了）；受总闸控制",
       "detail": [
         "三种内核都支持：标准 android.webkit.WebView / 腾讯 XWeb / Chromium(AwContents)",
-        "注入时机：页面每次重绘 + 每 3 秒兜底一次",
+        "注入时机：页面每次重绘 + 约每 3 秒兜底一次",
         "同一个脚本会被重复执行，所以要写成幂等的（给元素加 id、用 MutationObserver 保活、别用一次性 alert）"
       ]
     },
@@ -285,6 +285,224 @@
     "switchOn": "已开启",
     "switchOff": "已关闭",
     "modesTitle": "六种 hook 模式，可单独开关",
-    "limitsTitle": "限制（做不到的）"
+    "limitsTitle": "限制（做不到的）",
+    "boundaryTitle": "能力分界（谁做哪一段）"
+  },
+  "boundary": {
+    "title": "能力分界：哪件事该谁做",
+    "purpose": "模块只管 Java 层。遇到一个目标，先判断它在哪一层，再决定用模块还是用 shell。判断错了会白忙：Java 层的事用 rizin 改文件是弯路，native 的事配配方永远不生效。",
+    "terms": [
+      {
+        "term": "Java 层",
+        "means": "用 Java/Kotlin 写的代码，编译成 dex，跑在 ART 虚拟机里。类名、方法名、参数都能按名字找到。",
+        "example": "android.util.Log.isLoggable、你的 App 里 com.xxx.MainActivity.check()"
+      },
+      {
+        "term": "native 层",
+        "means": "用 C/C++ 写的代码，编译成 .so 机器码，CPU 直接执行。没有方法名，只有函数地址和偏移。",
+        "example": "libqimei.so、libcocos.so、各种加固壳"
+      },
+      {
+        "term": "WebView 层",
+        "means": "App 里嵌的网页，跑的是 JS。DOM、fetch 都在这一层。",
+        "example": "App 内的 H5 页面、腾讯 XWeb、Chromium"
+      }
+    ],
+    "decide": [
+      {
+        "step": 1,
+        "ask": "这件事的数据/逻辑，是不是一个 Java 方法？",
+        "yes": "→ 用模块，跳到「模块配方怎么写」",
+        "no": "→ 下一步"
+      },
+      {
+        "step": 2,
+        "ask": "是不是一个网页里的东西（DOM / fetch / localStorage）？",
+        "yes": "→ 用模块，把 .js 丢进 scripts/",
+        "no": "→ 下一步"
+      },
+      {
+        "step": 3,
+        "ask": "是不是磁盘上的文件（数据库 / mmkv / prefs / 缓存）？",
+        "yes": "→ 都不用，root 直接读",
+        "no": "→ 下一步"
+      },
+      {
+        "step": 4,
+        "ask": "逻辑是不是在 .so 里（native 自校验、算法、常量）？",
+        "yes": "→ 用 shell，rizin/Ghidra 改指令",
+        "no": "→ 下一步"
+      },
+      {
+        "step": 5,
+        "ask": "是不是要看/改网络包？",
+        "yes": "→ 用 shell，tcpdump / mitmproxy",
+        "no": "→ 用 shell 做静态分析，先搞清楚它在干什么"
+      }
+    ],
+    "cards": [
+      {
+        "id": "java-hook",
+        "layer": "Java 层",
+        "pick": "模块",
+        "canModule": true,
+        "howToTell": [
+          "能用 jadx 反编译出类名和方法名",
+          "异常堆栈里出现 com.xxx.Yyy.method( 这种格式",
+          "用 Xposed 的 findAndHookMethod 能按名字找到"
+        ],
+        "moduleDoes": "配方 JSON 里写 class + method + mode（log/args/return/…），App 启动即生效。改参数、改返回值、记明文都能做。",
+        "shellWouldNeed": "不需要。shell 要改文件、重签名、重启 App，同样的效果绕远路。",
+        "example": "想让它固定认为「已登录」：hook 掉 isLogin() 让它 return true。",
+        "action": "在 /sdcard/DSHxpandh/recipes/ 建 JSON，字段见 modes"
+      },
+      {
+        "id": "native-patch",
+        "layer": "native 层",
+        "pick": "shell",
+        "canModule": false,
+        "howToTell": [
+          "jadx 里只看到 native 声明（public static native ...），没有方法体",
+          "逻辑在 lib*.so 里，反编译 dex 找不到实现",
+          "校验发生在 so 内部的函数里，Java 只是调一下拿结果"
+        ],
+        "moduleDoes": "看不到。Java 层没有这次调用的记录，hook 无从下手。",
+        "shellWouldNeed": "rizin / Ghidra 定位偏移，改指令；或改元数据（例：patch_versym 把 bionic 符号版本刷成 glibc 能认的）。",
+        "example": "libqimei.so 里的 uskey 计算——模块完全够不着，只能改 so 或调它的导出函数。",
+        "action": "root 提 .so → rizin 分析 → 改字节 → 放回"
+      },
+      {
+        "id": "webview",
+        "layer": "WebView 层",
+        "pick": "模块",
+        "canModule": true,
+        "howToTell": [
+          "页面能用浏览器开发者工具的思路理解（有 DOM、有 fetch）",
+          "是 App 内嵌的 H5，不是原生控件画的",
+          "改样式、去弹窗、拦请求这类需求"
+        ],
+        "moduleDoes": "最省事的一条。hook 了 WebView 构造函数，实例一创建就登记，每 12 秒全量重注入。三种内核都支持。",
+        "shellWouldNeed": "能，但要先定位 WebView 实例再注入，成本高得多。",
+        "example": "去广告弹窗、改页面样式、拦某个 XHR 改成别的返回。",
+        "action": "把 .js 丢进 /sdcard/DSHxpandh/scripts/，3 秒内自动注入"
+      },
+      {
+        "id": "disk-data",
+        "layer": "磁盘文件",
+        "pick": "shell（root）",
+        "canModule": false,
+        "howToTell": [
+          "数据已经落盘：数据库、mmkv、shared_prefs、缓存文件",
+          "App 关闭后数据还在",
+          "用 grep 能在文件里搜到"
+        ],
+        "moduleDoes": "不适用。模块是进程内 hook，读文件不是它的活。",
+        "shellWouldNeed": "root 直接读。必要时走 /proc/<pid>/root/ 绕过 SELinux。",
+        "example": "这次取 qimei36 就是：/proc/32603/root/data/data/…/files/mmkv/InterProcessKV 里的 qimei_36_cache。",
+        "action": "psh 读文件，不用注入"
+      },
+      {
+        "id": "network",
+        "layer": "网络流量",
+        "pick": "shell 为主",
+        "canModule": "部分",
+        "howToTell": [
+          "要看请求头、参数、响应体",
+          "要知道它连了哪个域名",
+          "要改发出去的包"
+        ],
+        "moduleDoes": "读 Cookie 可以。要改请求得先 hook 到具体发请求的那个 Java 方法，多一层依赖。",
+        "shellWouldNeed": "tcpdump 抓明文；mitmproxy 解 HTTPS（遇 SSL Pinning 要额外处理）。",
+        "example": "想看 App 往哪个接口发了什么——抓包比 hook 直接。",
+        "action": "psh 跑 tcpdump，或起 mitmproxy"
+      },
+      {
+        "id": "repack",
+        "layer": "APK 静态改造",
+        "pick": "shell",
+        "canModule": false,
+        "howToTell": [
+          "要改 smali、去检测代码、改 manifest",
+          "要删掉某段逻辑而不是运行时绕过",
+          "改完希望永久生效"
+        ],
+        "moduleDoes": "不能。模块是运行时注入，不改文件。",
+        "shellWouldNeed": "apktool 拆包 → 改 → 重打包 → 重签名 → 安装。",
+        "example": "去掉启动时的完整性校验。",
+        "action": "apktool + 签名链"
+      },
+      {
+        "id": "anti-detect",
+        "layer": "反检测对抗",
+        "pick": "模块",
+        "canModule": true,
+        "howToTell": [
+          "目标 App 会检查 /proc/self/maps 里的 frida/xposed 字样",
+          "会反射扫 $xposed 开头的字段",
+          "会看堆栈里有没有 XposedBridge",
+          "会调 getInstalledPackages 查装了什么"
+        ],
+        "moduleDoes": "已经写好并接管：forName/loadClass、getProperty/getenv、readLine、getInstalledPackages、getDeclaredMethods/Fields、getStackTrace、getResource、listFiles 都 hook 了。",
+        "shellWouldNeed": "能，但每个检测点都得自己写，而且外部注入（Frida）本身留痕更多，容易先死在注入这一步。",
+        "example": "App 一启动就检测 hook 框架——模块由 Zygisk 在进程创建时加载，本来就不在检测视野里。",
+        "action": "默认就生效，可关：/sdcard/DSHxpandh/stealth.off"
+      }
+    ],
+    "quickTable": {
+      "header": [
+        "你要做的事",
+        "用哪个",
+        "为什么"
+      ],
+      "rows": [
+        [
+          "让某个判断固定成立",
+          "模块",
+          "Java 层，改返回值一行搞定"
+        ],
+        [
+          "看加密前的原文",
+          "模块",
+          "hook Cipher/Mac/MessageDigest 记入参"
+        ],
+        [
+          "改网页样子/去弹窗",
+          "模块",
+          ".js 三秒生效"
+        ],
+        [
+          "读 App 存的某个值",
+          "shell(root)",
+          "文件里就有，不用注入"
+        ],
+        [
+          "改 .so 里的算法",
+          "shell",
+          "模块看不到 native"
+        ],
+        [
+          "看 App 发了什么请求",
+          "shell",
+          "tcpdump/mitmproxy 更直接"
+        ],
+        [
+          "去掉 APK 里的检测代码",
+          "shell",
+          "要重打包"
+        ],
+        [
+          "绕过反 hook 检测",
+          "模块",
+          "已写好，且更隐蔽"
+        ]
+      ]
+    },
+    "rule": "一句话判断：这段逻辑能不能按「类名.方法名」找到？能找到 → 模块；只在 .so 里有 → shell。数据已经在文件里 → root 读，两者都不用。",
+    "notCovered": [
+      "加固壳的 native 反调试：能试，成功率看壳的版本",
+      "TEE / 硬件密钥参与校验：拿不到就没法伪造",
+      "服务端校验：本地改成什么样，上游不认照样拒"
+    ],
+    "coversNote": "上面「能」的都是已实现、可直接用的；「不能」的是原理上做不到，不是还没做。"
   }
 }

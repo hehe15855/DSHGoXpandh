@@ -1,4 +1,38 @@
 # 更新日志
+## v13.1.1（2026-11-27）
+
+### 增强
+
+- **隐身补了 6 类检测面**（原来只挡类名/属性/路径/包列表/堆栈）：
+  - `ProcessBuilder.start` —— 之前只挡 `Runtime.exec`，检测器换个类就能跑 `ps` / `cat /proc/self/maps`
+  - `getAnnotations` / `getDeclaredAnnotations` —— 过滤 xposed 相关注解
+  - `Debug.isDebuggerConnected` / `waitingForDebugger` —— 恒 false
+  - `getRunningAppProcesses` / `getRunningServices` —— 模块进程从列表消失
+  - `getInstallerPackageName` —— 侧载痕迹回 `com.android.vending`
+  - `Files.readAllBytes` —— NIO 直读可疑路径抛 AccessDenied（不是每个人都用 BufferedReader）
+
+### 修正
+
+- 详细说明页字号统一 13sp（表格 12sp），与公告/帮助一致
+- `DSH-GUIDE` 里「下发命令写 cmd.json」是错的：实际是 `c-<包名SHA1前8位>.bin` 且要 XOR 混淆，改成用 `dshxpandh_inject`
+- `dshxpandh_script` 描述里「先判 window.__done」不实：内置脚本用的是「重复执行无副作用」，已改口径
+- `capabilities.json` 的「记前后 300 字节」改为「各 200（可调，上限 512）」
+
+## v13.1.0（2026-11-27）
+
+### 新增
+
+- **能力分界写进 App**：说清「哪件事该谁做」——模块只管 Java 层，native 层的 .so 逻辑得交给 rizin/Ghidra 改二进制，落盘数据 root 直接读。
+  - `capabilities.json` 新增 `boundary` 字段：术语定义、五步判断（decide）、七张分层卡（cards）、对照表（quickTable）、一句话判据（rule）、三条谁都做不到（notCovered）。
+  - `DSH-GUIDE.md` 新增「能力分界：哪件事该谁做」一节，人读版，含五步判断、对照表、硬边界。
+  - 别人装完模块、DSH 读指南，都能自己判断该用哪条路，不用猜。
+
+### 修正
+
+- **导出文档会冲掉用户手改的内容**：原来 `exportCapabilities()` 每次 `onResume` 都用 assets 覆盖控制目录，用户改了 `capabilities.json` 下次打开设置页就没了。
+  - 改成版本戳机制：控制目录放 `.spec-rev`（内容 = APK versionName），只在「文件不存在」或「本地戳 ≠ APK 版本」时才写。
+  - 用户手改后不升 APK 就保留；升了 APK 才拿新内容。
+
 ## v13.0.2（2026-11-26）
 
 ### 修正

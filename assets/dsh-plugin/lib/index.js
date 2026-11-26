@@ -252,7 +252,7 @@ export function apply(ctx) {
 
   safeRegister({
     name: 'dshxpandh_script',
-    description: '脚本层：往控制目录 scripts/ 放 .js，3 秒内自动注入所有已登记 WebView（标准 / 腾讯 XWeb / Chromium），不用重启 App。改页面、去广告弹窗、改样式、拦请求优先用它。脚本要幂等（先判 window.__done）。',
+    description: '脚本层：往控制目录 scripts/ 放 .js，几秒内自动注入所有已登记 WebView（标准 / 腾讯 XWeb / Chromium），不用重启 App。改页面、去广告弹窗、改样式、拦请求优先用它。脚本必须幂等——页面重绘会反复执行，重复插入不能有副作用（内置示例的做法是直接 append style，插多次也无害）。',
     parameters: {
       type: 'object',
       properties: {
@@ -291,10 +291,14 @@ export function apply(ctx) {
       if (act === 'off') {
         if (!fs.existsSync(full)) throw new Error('不存在: ' + nm)
         fs.writeFileSync(full + '.off', String(Date.now()), 'utf8')
+        try { if (fs.existsSync(full + '.on')) fs.unlinkSync(full + '.on') } catch (e) {}
         return '已停用 ' + nm
       }
       if (act === 'on') {
         if (fs.existsSync(full + '.off')) fs.unlinkSync(full + '.off')
+        // 还要写 .on 标记：模块的 isScriptOff 先看文件、再看 prefs，
+        // 光删 .off 会被模块设置页留下的 scriptOff 记录压回去（表现为「说恢复了却不跑」）。
+        try { fs.writeFileSync(full + '.on', String(Date.now()), 'utf8') } catch (e) {}
         return '已恢复 ' + nm
       }
       throw new Error('action 只能是 list/add/remove/off/on')
@@ -321,8 +325,21 @@ export function apply(ctx) {
       if (!pkg) throw new Error('pkg 不能为空')
       // 不再要求 root：命令走控制目录共享文件，模块侧通过 provider 取。
       if (args.clear) {
-        const r = await sh('psh "rm -f /data/user/0/' + pkg + '/files/dshxpandh.cmd.json" 2>&1', 20000)
-        return '已清空 ' + pkg + '\n' + String(r.out).trim()
+        // 三个来源都要清，否则「清空了却还在跑」：
+        //   ① App 私有目录（有 root 时命令写这里）
+        //   ② /data/data 等价路径（部分机型/多用户）
+        //   ③ 控制目录共享文件（免 root 通道）
+        // 模块 prefs 里的 'cmd' 键插件够不着（provider 没有 setter），
+        // 但模块按 ts 单调去重，同一条命令不会反复执行，重启进程最多再跑一次。
+        const shared = ROOT + '/c-' + cmdTag(pkg) + '.bin'
+        const cmd = 'rm -f /data/user/0/' + pkg + '/files/dshxpandh.cmd.json'
+          + ' /data/data/' + pkg + '/files/dshxpandh.cmd.json'
+          + ' ' + shared + ' 2>&1'
+        const r = await sh('psh "' + cmd + '"', 20000)
+        try { if (fs.existsSync(shared)) fs.unlinkSync(shared) } catch (e) {}
+        // 第四处：模块 prefs 里的 'cmd' 键（provider setCmd + __clear__ 哨兵）
+        const pr = await sh('psh "/system/bin/content call --uri content://' + PKG + '.cfg --method setCmd --arg __clear__"', 20000)
+        return '已清空 ' + pkg + '（私有目录 + 共享文件 + 模块配置）\n' + String(r.out).trim()
       }
       const code = String(args && args.js || '')
       if (!code) throw new Error('js 不能为空（或 clear=true）')

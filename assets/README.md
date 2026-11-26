@@ -1,250 +1,245 @@
-# DSHxpandh · Xposed hook 工具箱
+# DSHxpandh
 
-装一个模块，给 App 打 **Java 层 hook**：抓明文、改参数、注网页脚本、读 Cookie、调内部方法。
+[![LSPosed](https://img.shields.io/badge/LSPosed-API%2093%2B-blue)](https://github.com/LSPosed/LSPosed)
+[![Android](https://img.shields.io/badge/Android-8.0%20~%2016-green)](https://developer.android.com)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/hehe15855/DSHGoXpandh)](https://github.com/hehe15855/DSHGoXpandh/releases/latest)
 
-## 它不是什么
+> **在别的 App 里开一扇窗。** 看得见它内部发生了什么，也能动手改——不用改包、不用重签，装一次常驻生效。
 
-- **不是抓包工具** —— 抓不到 TLS 密文。要抓包请用 tcpdump / Charles / mitmproxy。
-- **不做 native 层** —— 用 C/C++ 写的逻辑碰不到，那要 Zygisk 模块。
-- **不需要 root** —— 它是 LSPosed 模块，权限由 LSPosed 提供。
+Android 上想改一个 App 的行为，常见做法是拆包、改 smali、重签名。慢，而且装回去就是另一个包了。
 
-## 安装
+这个模块换了条路：挂在 LSPosed 上，在**目标 App 运行的时候**动手。改方法返回值、记加解密明文、往网页里注入 JS、解浏览器 Cookie——配置写好，App 每次启动自动生效。
 
-1. 先有 Magisk / KernelSU，再装 **LSPosed**
-2. 安装本模块 APK
-3. LSPosed → 模块 → 启用 **DSHxpandh**
-4. 作用域 → 勾选**目标 App**（只勾你要 hook 的那个）
-5. **强制停止目标 App 再打开**（不重启不生效）
-
-## 三步用起来
-
-```
-① 打开 DSHxpandh → 配方页 → 填目标包名（如 com.example.app）
-② 点一个配方，例如「抓加密明文」
-③ 强制停止目标 App → 打开 → 操作几下 → 去 LSPosed 日志看结果
-```
-
-## 六种模式
-
-| 模式 | 作用 | 典型用途 |
-|---|---|---|
-| `log` | 记下入参和返回值 | **加密**：原文→密文；**解密**：密文→明文（能直接看到解密结果）|
-| `args` | 改入参 | 假装另一台设备、改请求内容 |
-| `return` | 改返回值 | 让某个判断恒真（已开通 / 非会员限制）|
-| `js` | 往 WebView 页面注入脚本 | 改标题、自动填表、去弹窗 |
-
-| `cookie` | 读 WebView 的 Cookie | 拿网页登录态 |
-| `call` | 主动调静态方法 | 不用等触发，直接取值 |
-
-## 十二个内置配方
-
-| 配方 | 做什么 |
-|---|---|
-| `cipher-log` | 抓 `Cipher` / `Mac` 的**加密前原文和解密后明文** |
-| `fake-ua` | 换 User-Agent |
-| `fake-device-id` | 换设备 ID |
-| `fake-android-id` | 换 Android ID |
-| `fake-location` | 换定位 |
-| `block-su` | 拦 su 调用（防检测）|
-| `block-logs` | 屏蔽刷屏日志 |
-| `log-webview-url` | 记网页加载的地址 |
-| `fake-screen` | 看/改屏幕参数 |
-| `ssl-pinning-off` | 关证书校验（**实验性**，多数 App 无效果）|
-| `crypto-full` | 全链路：`Cipher.update`+`doFinal`、`Mac`、`MessageDigest`、`Signature`、`SecretKeySpec`（看密钥）|
-| `crypto-base64` | 看 `Base64.encodeToString` / `decode` 前后（密文常以 Base64 传输）|
-
-## 让别人用 DSH 接管（可选）
-
-如果对方也用 DSH（AI agent），装完只要说一句：
-
-> 我装了 DSHxpandh 模块，接口在 `/sdcard/DSHxpandh/`，先读 `DSH-GUIDE.md`
-
-DSH 会自己读到：
-
-| 文件 | 内容 |
-|---|---|
-| `capabilities.json` | 全部能力：6 模式 / 13 配方 / 开关 / 9 条限制 |
-| `recipes/*.json` | 每个配方的 hook 配置，可直接 cp 到 `Download/DSHxpandh/<包名>.json` |
-| `status.json` | 版本与通道状态、注入总开关 |
-
-**这些文件在你第一次打开设置页时自动导出**，不用手动准备。
-
-## 脚本从哪来、删了能不能回来
-
-两个来源，**同名时以你自己放的为准**：
-
-| 来源 | 位置 | 能不能改内容 | 删了能回来吗 |
-|---|---|---|---|
-| **内置** | 打包在 APK 里，界面上带「内置」标记 | 改不了，只能开关或移除 | **能** —— 文件还在 APK 里，点「恢复被移除的内置脚本」就回来 |
-| **本地** | `<控制目录>/scripts/` | 随便改、删、加 | **不能** —— 文件真删了，没了就是没了 |
-
-**本地脚本删除要点两下确认**（第一下按钮变成「确认删」），因为它不可恢复。
-
-想改内置脚本的内容：把同名文件放进 `scripts/` 目录覆盖它，同名时以你放的为准。
+**它可以接入 DSH，把手工配置变成对话。** 不接也能用：配方和脚本都是纯文本，手写一样生效；接上之后，助手能自己读能力清单、配配方、下脚本，你说「把这个弹窗去掉」，它去做。
 
 ---
 
-## 控制目录
+## 能做什么
 
-模块固定用 `/sdcard/DSHxpandh/`，不存在就自动创建；该位置不可用时退回 `/sdcard/Download/DSHxpandh/`。
+六种模式，都是**运行时**生效，配好即用：
 
-设置页底部会显示当前实际路径。
+| 模式 | 干什么 | 典型场景 |
+|---|---|---|
+| **log** 抓明文 | 记下方法的入参和返回值 | 看加密前原文、解密后明文、API 返回 |
+| **args** 改参数 | 替换方法收到的值 | 试不同输入，看 App 怎么反应 |
+| **return** 改结果 | 让方法固定返回你的值 | 让某个判断永远成立 / 不成立 |
+| **js** 改网页 | 往 WebView 注入脚本 | 改样式、去弹窗、自动填表、读 DOM |
+| **cookie** 取登录态 | 读 Cookie（含 HttpOnly） | 拿来做后续请求 |
+| **call** 调方法 | 直接调 App 内部方法 | 主动要数据，不用等它触发 |
 
-| 文件 | 作用 |
+自带 **13 个配方**（改设备 ID、伪装定位、关 SSL Pinning、关日志……）和 **9 个网页脚本**（去广告、倍速、解除复制限制……），自定义页可单独开关。改脚本不用重装模块，3 秒内自动重注入。
+
+## 网页注入支持三种内核
+
+这是相对同类工具的主要差别——很多模块只支持标准 WebView，遇到自带浏览器就失效。
+
+| 内核 | 常见场景 |
 |---|---|
-| `off` | 存在即停 JS 注入（删掉恢复）|
-| `stealth` | 存在即对目标 App 隐藏 Xposed 特征 |
-| `classhide.off` | 存在则**不**隐藏 Xposed 类名（默认是隐藏的）|
-| `abilities/<mode>.off` | 单独关掉某个模式 |
-| `scripts/*.js` | 多脚本，`<名>.js.off` 表示停用 |
-| `cmd.json` | 一次性下发命令 `{"ts":时间戳,"js":"代码"}` |
+| 标准 `android.webkit.WebView` | 大多数 App 内置网页 |
+| 腾讯 XWeb | 微信、QQ |
+| Chromium `AwContents` | OPPO / Chrome / 夸克 / UC 等自带浏览器 |
 
-这些文件**改完即时生效**（1.5–2.5 秒轮询），不用重启。
+注入时机是页面加载 + 每 12 秒兜底重注入，页面重渲染后效果不会丢。
 
-## 配置格式
+## 能力分界：哪件事该谁做
 
-放 `/sdcard/Download/DSHxpandh/<包名>.json`：
+模块只管 **Java 层**。判断错了会白忙——Java 层的事用反汇编改文件是弯路，native 的事配配方永远不生效。
 
-```json
-{
-  "hooks": [
-    { "class": "android.webkit.WebSettings",
-      "method": "getUserAgentString",
-      "mode": "return",
-      "return_value": "MyUA" }
-  ]
-}
+### 三层，怎么认
+
+| 层 | 是什么 | 怎么认 |
+|---|---|---|
+| **Java 层** | Java/Kotlin 编译成 dex，跑在 ART 上 | jadx 能反编译出类名方法名；堆栈里有 `com.xxx.Yyy.method(` |
+| **native 层** | C/C++ 编译成 .so，CPU 直接跑 | jadx 里只看到 `native` 声明，没有方法体 |
+| **WebView 层** | App 内嵌网页，跑 JS | 有 DOM、有 fetch，能用开发者工具的思路理解 |
+
+### 五步判断
+
+1. 是一个 **Java 方法**吗？→ 用**本模块**配配方
+2. 是**网页里的东西**（DOM / fetch / localStorage）？→ 用**本模块**丢 .js
+3. 是**磁盘上的文件**（数据库 / mmkv / prefs）？→ 都别用，**root 直接读**
+4. 逻辑在 **.so 里**？→ 用 **rizin / Ghidra** 改二进制
+5. 是要看/改**网络包**？→ 用 **tcpdump / mitmproxy**
+
+### 一句话判据
+
+> 这段逻辑能不能按「类名.方法名」找到？
+> 能找到 → **本模块**；只在 .so 里 → **改二进制**；数据已经在文件里 → **root 读**，两者都不用。
+
+### 模块做不到的
+
+- native 内部的自校验、算法、常量（Java 层看不到这次调用）
+- 改 APK 文件、永久生效的静态改造
+- 原生界面 / Flutter / Canvas 游戏（不是 WebView 渲染的）
+- 没在 LSPosed 里勾选过的 App
+
+### 谁都做不到的
+
+- 加固壳的 native 反调试：能试，成功率看壳的版本
+- TEE / 硬件密钥参与校验：拿不到就没法伪造
+- 服务端校验：本地改成什么样，上游不认照样拒
+
+> 完整结构化版本在 `capabilities.json` 的 `boundary` 字段，AI 助手读那个就能自动选路。
+
+## 密钥页：Cookie 离线解密
+
+浏览器把登录态存在自己的 SQLite 库里，`encrypted_value` 是 AES-128-CBC 密文。模块的「密钥」页直接读出来解开，不抓包。
+
+| 形态 | 含义 | 处理 |
+|---|---|---|
+| `v10` | AES-128-CBC，密钥 PBKDF2-SHA1("peanuts","saltysalt",1) | 解开 |
+| 无前缀（`value` 列有值） | 明文，WebView 内核的库常见 | 直接读 |
+| `v20` | App-Bound，密钥在系统服务里、绑定应用身份 | 解不开，界面如实说明 |
+
+扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，扫到什么解什么。结果可导出到控制目录下的 `cookies.json`。
+
+## 隐身
+
+默认开启。挡住这些探测面：
+
+- **类名与包名** —— `loadClass` 撞到 Xposed / LSPosed / libxposed 的任何类，直接抛 `ClassNotFoundException`
+- **系统属性与环境变量** —— 含 `XPOSED` / `LSPOSED` / `MAGISK` 之类的键返回 `null`
+- **可疑路径** —— `/data/adb/modules`、`/data/adb/lspd`、`xposedbridge.jar` 等，`exists` / `isFile` / `listFiles` 一律说没有
+- **包 / 进程 / 服务列表** —— 模块自己从 `getInstalledPackages`、`getRunningAppProcesses`、`getRunningServices`、`queryIntentActivities` 里消失
+- **堆栈与反射** —— `getStackTrace` 过滤框架帧，`getDeclaredMethods` 过滤 `$xposed` 成员
+- **注解** —— `getAnnotations` / `getDeclaredAnnotations` 去掉 xposed 相关注解
+- **进程启动** —— `Runtime.exec` 和 `ProcessBuilder.start` 都不允许跑指向可疑路径的命令
+- **文件读取** —— NIO 的 `Files.readAllBytes` 读可疑路径直接 `AccessDeniedException`
+- **调试器** —— `isDebuggerConnected` / `waitingForDebugger` 恒返回 false
+- **安装来源** —— 被问模块的 installer 时回 `com.android.vending`（侧载痕迹）
+
+控制目录有开关关掉它（`stealth.off`）——但**诚实的边界**是：只能挡 Java 层探测。
+native 侧直接读 `/proc/self/maps`、检查 ART 内存页属性、扫 vaddr 段这些，Java 层看不到也拦不住。
+专门的检测工具（如 Holmes、Rikka 类方案）从 native 走，仍能发现痕迹。
+
+## 安装
+
+1. 下载 [Releases](https://github.com/hehe15855/DSHGoXpandh/releases/latest) 里的 APK
+2. 装好后到 **LSPosed 管理器**启用本模块
+3. 勾选要操作的目标 App
+4. **重启那个 App**（不是重启手机）
+5. 打开本模块设置页，选配方或写自定义规则
+
+首次打开会引导授存储权限——不给也能进，但脚本和配方用不了（界面显示「受限模式」）。
+
+### 配合 AI 助手用（可选）
+
+模块会把能力清单和操作说明导出到**控制目录**（默认 `/sdcard/DSHxpandh/`）。助手读到 `DSH-GUIDE.md` 就知道全部接口：
+
+```
+我装了 DSHxpandh 模块，接口在 /sdcard/DSHxpandh/，先读 DSH-GUIDE.md
 ```
 
-多个类一起 hook 用 `"classes": ["a.b.C", "a.b.D"]`。
+自带一个 DSH 插件（`dsh-plugin/`），装上后聊天框上方会有状态条和面板：
 
-## 限制（看清再用）
+```bash
+dsh plugin --profile web add /sdcard/DSHxpandh/dsh-plugin
+```
 
-1. **只能动 Java 代码**，C/C++ 写的逻辑碰不到。
-2. **只能 hook 已加载的类**；加壳 / 动态加载的要等它自己加载出来。
-3. **页面不是标准 WebView 的**，`js` 和 `cookie` 用不了。
-4. **只对 LSPosed 勾过作用域的 App 生效**，没勾的进程完全不动。
-5. **改值只影响方法调用**，已编译进底层的逻辑改不了。
-6. 日志有上限：速度由配方的 `sample`/`window_ms` 决定（各配方不同，如 cipher-log 每秒 3 次），总量由 `max_logs` 决定（默认 1000 条）—— 都在配方 json 里，可以改。
-7. **改配置后要重启目标 App**；只有控制目录里的开关是热生效的。
-8. 模块痕迹藏不掉，专门的检测工具能发现。
+装完重启一次引擎。不装插件也能用，只是要手动改文件。
+
+## 兼容性
+
+| 项 | 要求 |
+|---|---|
+| Android | 8.0（API 24）～ 16（API 36）；APK 声明 `minSdk 24` / `targetSdk 36` |
+| LSPosed | 现代 API 93+；经典版 1.9.x 与 Zygisk 版 2.x 都支持 |
+| Root | KernelSU / Magisk / APatch —— LSPosed 本身就要 root |
+| 存储权限 | 「所有文件访问」（写控制目录）；不给也能进，但脚本与配方用不了 |
+| 架构 | 不限：纯 Java，无 native 库，armeabi-v7a / arm64-v8a / x86_64 通用 |
+| 已实测 | Android 15 + LSPosed 2.2.1 + KernelSU；其余版本按上表兼容，未逐一跑过 |
 
 ## 常见问题
 
-**套了配方没效果？**
-→ 90% 是没重启目标 App。强制停止再打开。
+**改了配置不生效？**
+重启目标 App。只有控制目录里的开关（`.off` 文件）是热生效的。
 
-**看不到日志？**
-→ LSPosed 管理器里把日志级别调成 info；模块日志前缀是 `core`。
+**找不到要 hook 的类名？**
+用 jadx 反编译看。类名被混淆过的话，按行为找（搜字符串常量、看堆栈）。
 
-**LSPosed 里显示「已启用」但没反应？**
-→ 检查作用域勾的是不是目标 App；或者装完模块后 app 路径变了（重装过），需要在 LSPosed 里关掉模块再打开。
+**为什么有的 App 完全没反应？**
+没在 LSPosed 里勾选它。模块不会碰没勾选的进程。
 
-**某个 App 完全不动？**
-→ 它可能把关键逻辑放在 native 层了，Java hook 够不到。
+**网页注入没效果？**
+先确认那个页面是不是真的 WebView（不是原生控件、Flutter 或 Canvas 画的）。三种内核都支持，但原生 UI 改不了。
 
-## 网页注入是怎么工作的
+**更新后文档变了？**
+控制目录的 `capabilities.json`、`DSH-GUIDE.md` 跟着 APK 版本走。你手改过的会保留，除非升了模块版本。
 
-模块会在三种 WebView 内核里找注入口，只要目标 App 在 LSPosed 作用域里：
+**模块能被检测到吗？**
+能。隐身只挡 Java 层探测，专门的检测工具从 native 侧查仍能发现。
 
-| 内核 | 典型 App | 抓取方式 |
-|---|---|---|
-| `android.webkit.WebView` | 大多数工具类、阅读类 | hook 构造函数 |
-| 腾讯 XWeb | 微信、QQ | hook 构造函数（接口同构） |
-| Chromium `AwContents` | OPPO/Chrome/夸克/UC 等 | onDraw 记录正在绘制的实例 |
+## 从源码构建
 
-**注入节奏**：页面每次重绘注入一次（限流 800ms），另有 3 秒兜底。
-
-**所以脚本必须写成幂等的** —— 同一个脚本会被执行很多次：
-
-```js
-(function () {
-  // ✅ 用 id 判断，重复执行不会加第二份
-  if (document.getElementById('my-style')) return;
-  var s = document.createElement('style');
-  s.id = 'my-style';
-  s.textContent = 'a{color:red}';
-  document.head.appendChild(s);
-
-  // ✅ 页面重渲染会冲掉，用 MutationObserver 保活
-  new MutationObserver(function () {
-    if (!document.getElementById('my-style')) document.head.appendChild(s);
-  }).observe(document.documentElement, {childList: true, subtree: true});
-})();
-```
-
-**别做的**：`alert()`、无判断地 `location.reload()`、每次执行都发网络请求 —— 会变成每 3 秒一次。
-
-**改不了的**：原生界面（不是 WebView 渲染的页面）。
-
-## 版本
-
-以 App 里显示的为准（首页标题旁），或读控制目录下 `status.json` 的 `version` 字段
-
-## 开发与维护注意
-
-这几条是真机上踩出来的，改代码前先看一眼。
-
-### 隐身 hook 必须排除模块自己的进程
-
-```java
-if ("<模块包名>".equals(pkg)) return;
-```
-
-隐身会拦 `Runtime.exec`（防 root 探测）。如果不排除自己，模块读配置时跑 `su` 会被自己的 hook 挡掉，
-界面就会显示「没有 Root 权限」，而 SukiSU 那边明明已经授权 —— 现象是两边说法矛盾。
-同样要排除的还有 `File.listFiles`、`File.exists`、`ClassLoader.loadClass`、`Class.getDeclaredMethods`。
-
-### 不要 killall lspd
-
-`lspd` 是 LSPosed 的 root 守护进程，父进程是 init。杀掉之后它和 zygote 的 binder bridge 就断了，
-新起的进程连不上旧的 bridge，**只能重启手机恢复**。所有模块都会失效（不只是本模块）。
-
-改作用域的正确做法：写 `modules_config.db` → 重启手机 → 生效。不要在运行时反复重启 daemon。
-
-### LSPosed 管理器可能根本没装
-
-`pm list packages | grep lsposed` 查不到 `org.lsposed.manager` 时，管理器就是没装。
-装回来：
+| 依赖 | 版本 / 说明 |
+|---|---|
+| JDK | 8 或更高（源码按 `--release 8` 编译） |
+| Android SDK · platform | 含 `android.jar`，API 24 以上（默认找 `platform-36`） |
+| Android SDK · build-tools | `aapt2`、`d8`、`zipalign`、`apksigner` |
+| LSPosed API | `xapi.jar`（libxposed API），API 93+ |
 
 ```bash
-pm install -r /data/adb/modules/zygisk_lsposed/manager.apk
+export ANDROID_JAR=/path/to/platforms/android-36/android.jar
+export XAPI_JAR=/path/to/xapi.jar
+export KS_PASS=yourpass          # 可选，签名口令，默认 123456
+bash build.sh
+# 产物：mod_signed.apk
 ```
 
-### 改包名要动哪些地方
+不设环境变量时，脚本按顺序自动探测：`$ANDROID_HOME/platforms/*`、`/usr/lib/android-sdk/platforms/*`、`~/Android/Sdk/platforms/*`；`xapi.jar` 找 `./xapi.jar`、`../xapi.jar`、`~/xapi.jar`。都找不到会直接报错退出，不会静默产出空壳。
 
-想用自己的包名重新发布，一共 4 处：
+资源编译必须用带 `resources.arsc` 的 SDK platform jar；高版本 robolectric 的 android.jar 只够 javac 用，喂给 `aapt2` 会失败。
 
-| 位置 | 改什么 |
-|---|---|
-| `AndroidManifest.xml` | `package="你的包名"` |
-| `AndroidManifest.xml` | provider 的 `android:authorities="你的包名.cfg"` |
-| `src/.../HookEntry.java` | `private static final String SELF = "你的包名"` |
-| `src/.../DshxpandhProvider.java` | `AUTHORITY = "你的包名.cfg"` |
+签名用同目录的 `debug.ks`（不在仓库里，自己放一个，或设 `KEYSTORE` 指向别处）。
 
-另外还要把源码目录（`src/<把包名的点换成斜杠>/`）一起移过去，所有 `.java` 的 `package` 声明跟着改。
+构建带两道审验闸门：源码审验（`audit.mjs --pre`）不过就中止，产物审验（`--post`）只告警。版本号自动从 Manifest 同步到 `HookEntry`、`module.prop`、`version.json`。
 
-**不用改的**：
-- `build.sh` —— 它从 Manifest 读包名，`xposed_init` 自动跟随
-- `dsh-plugin/lib/index.js` —— 控制目录是探测的，不认包名
-- 控制目录路径 —— 动态选
+### 发布前核对
 
-### 注入要覆盖三种 WebView 内核
+```bash
+./verify-release.sh
+```
 
-| 内核 | 典型 App | 抓取方式 |
-|---|---|---|
-| `android.webkit.WebView` | 大多数工具/阅读类 | hook 构造函数 |
-| 腾讯 XWeb | 微信、QQ | hook 构造函数（接口同构） |
-| Chromium `AwContents` | OPPO/Chrome/夸克/UC | `onDraw` 记录正在绘制的实例 |
+重编一次源码，然后比对两头的 `classes.dex`：本地 `mod_signed.apk` 里那份、线上最新 Release 的 asset 里那份。三行结论：
 
-两个坑：
+1. **本地产物 = 当前源码** — 本地包是不是刚编出来的
+2. **线上 Release = 当前源码** — 挂出去的是不是同一次构建
+3. **版本号** — release tag 和 manifest 的 `versionName`
 
-1. **只 hook `loadUrl` 会漏** —— `loadData` 加载的页面抓不到，要 hook 构造函数
-2. **`evaluateJavaScript(js, null)` 会让 Chromium native 崩** —— 回调必须传一个空实现，不能传 null
+退出码 `0` 全绿 / `2` 有不一致 / `3` 取不到远端（取不到不算通过）。
 
-### 配置读取依赖模块 App 进程
+写它是为了 2026-11-26 那个上午：v12.9.0 的 Release 挂的是旧代码的包，源码提交了却没重新打包。只比文件名和字节数看不出来（两边都是 135138 字节）。
 
-ContentProvider 跑在模块 App 里，App 被系统回收后 provider 就没了。现在的兜底：
+**发布了源码却没重打包，和跳过一个构建步骤是同一类错**：坏的地方不在构建，在「以为发布完了」。
 
-- 脚本走 `<控制目录>/scripts/` 文件回落（一直能用）
-- 隐身开关读不到时**按开处理**（宁可多隐一层）
+## 项目结构
+
+```
+src/…/HookEntry.java        目标进程里的 hook 逻辑（注入、隐身）
+src/…/SettingsActivity.java 设置界面
+src/…/DshxpandhProvider.java    跨进程配置通道
+src/…/AppPickerDialog.java  应用选择器
+src/…/ProbeService.java     探针服务
+src/…/CookieVault.java      Cookie 解密（v10 / 明文 / v20 检测）
+assets/scripts/             内置脚本（9 个）
+assets/recipes/             内置配方（13 个）
+assets/capabilities.json    能力清单 + 能力分界（助手读这个）
+assets/DSH-GUIDE.md         给助手的接口说明
+module.prop                 LSPosed / Magisk 模块信息
+CHANGELOG.md                更新日志
+LICENSE                     MIT
+NOTES.md                    开发笔记（踩过的坑）
+```
+
+## 开发笔记
+
+踩过的坑都在 [NOTES.md](NOTES.md)：三种 WebView 内核的差异、Chromium 的 `evaluateJavaScript` 传 null 会崩、隐身为啥必须排除模块自己、LSPosed 的 binder 连接为什么不能靠 killall 重建。
+
+## 免责声明
+
+仅供学习研究与自有设备调试使用。请勿用于未授权的设备或违反服务条款的场景。
+
+## License
+
+[MIT](LICENSE)
