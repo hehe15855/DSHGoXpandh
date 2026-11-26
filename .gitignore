@@ -30,3 +30,11 @@ FRAMEWORK.md
 audit-learned.json
 audit-history.jsonl
 misjudge.json
+
+# libxposed API 的编译中间产物（源码要留，class 不留）
+api-libxposed/out/
+api-libxposed/srcs.txt
+metapack/
+
+# 构建时生成
+srcs.txt
