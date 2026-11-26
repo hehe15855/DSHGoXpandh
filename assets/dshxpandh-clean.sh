@@ -1,17 +1,17 @@
 #!/bin/bash
-# xhook 控制目录：单项删除 / 一键清除 / 备份 / 还原
+# DSHxpandh 控制目录：单项删除 / 一键清除 / 备份 / 还原
 # 铁律：任何删除动作前先备份；还原前也备份当前（防止还原后更后悔）。
 set -u
 # 控制目录自动探测：与模块的 pickRoot 保持一致（DSH 目录非空优先，否则用通用目录）
 pick_ctrl() {
-    local d=/sdcard/DSH-Output/xhook
+    local d=/sdcard/DSHxpandh
     if [ -d "$d" ] && [ -n "$(ls -A "$d" 2>/dev/null)" ]; then printf '%s' "$d"; return; fi
-    d=/sdcard/xhook
+    d=/sdcard/DSHxpandh
     if [ -d "$d" ]; then printf '%s' "$d"; return; fi
-    printf '%s' /sdcard/DSH-Output/xhook
+    printf '%s' /sdcard/DSHxpandh
 }
 CTRL=$(pick_ctrl)
-BAK=$(dirname "$CTRL")/xhook-backups
+BAK=$(dirname "$CTRL")/DSHxpandh-backups
 STAMP=$(date +%Y%m%d-%H%M%S)
 
 # 只往 stdout 输出最终路径；所有提示走 stderr，避免被 $(...) 捕获污染。

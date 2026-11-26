@@ -10,6 +10,7 @@
 # 只读远端，不推送、不上传。
 set -u
 D=$(cd "$(dirname "$0")" && pwd); cd "$D"
+# 远端仓库真名，勿随显示名改
 REPO=${REPO:-hehe15855/DSHGoXpandh}
 BAK=/tmp/xmod-verify-$(date +%m%d-%H%M%S); mkdir -p "$BAK"
 

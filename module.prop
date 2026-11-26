@@ -1,6 +1,6 @@
 id=io.github.hehe15855.dshxpandh
-name=DSHGoXpandh
-version=v12.9.0
-versionCode=147
+name=DSHxpandh
+version=v13.0.2
+versionCode=160
 author=hehe15855
-description=DSH Go 的扩展模块：让手机上的 AI agent 能看见别的 App 在干什么、也能动手改。提供抓明文/改参数/改返回值/注入网页 JS/读 Cookie/调内部方法六种能力，网页注入支持标准 WebView、腾讯 XWeb、Chromium 三种内核。
+description=让手机上的 AI 助手能看见、也能改别的 App：hook Java 方法拿到加解密明文、改参数和返回值、调内部方法、读 Cookie，或者往网页里注入 JS（标准 WebView / 腾讯 XWeb / Chromium 都支持）。包里自带 DSH 插件，装进 DSH 就有 dshxpandh_status、dshxpandh_script、dshxpandh_inject、dshxpandh_logs 四个工具；不装 DSH 也能照常手工用。

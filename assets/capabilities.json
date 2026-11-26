@@ -215,6 +215,18 @@
       "covers": [
         "android.util.Base64"
       ]
+    },
+    {
+      "id": "chrome-cookie",
+      "name": "抓 Cookie 读写",
+      "when": "想看某个 App 的 WebView / Chromium 在读哪些 Cookie",
+      "asset": "recipes/chrome-cookie.json",
+      "covers": [
+        "android.webkit.CookieManager",
+        "org.chromium.android_webview.CookieManager",
+        "org.chromium.net.CronetCookieManager",
+        "org.chromium.chrome.browser.cookies.CookiesFetcher"
+      ]
     }
   ],
   "switches": [
@@ -261,7 +273,7 @@
     "不是 WebView 渲染的页面（原生界面、Flutter、Canvas 游戏）改不了；三种 WebView 内核都支持。",
     "只对 LSPosed 勾选过的 App 生效，没勾的进程完全不动。",
     "改值只影响方法调用，已经编译进底层代码的逻辑改不了。",
-    "日志有上限：速度由每个配方的 sample/window_ms 决定（默认每秒 5 次），总量由 max_logs 决定（默认 1000 条）—— 两者都能在配方 json 里改。",
+    "日志有上限：速度由每个配方的 sample/window_ms 决定（各配方不同，如 cipher-log 每秒 3 次），总量由 max_logs 决定（默认 1000 条）—— 两者都能在配方 json 里改。",
     "关掉通道只停止下发；已经挂上的要重启目标 App 才清得掉。",
     "模块痕迹藏不掉，专门的检测工具能发现。",
     "不提权、不改系统设置，只做进程内的运行时替换。"

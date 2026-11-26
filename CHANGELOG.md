@@ -1,4 +1,129 @@
 # 更新日志
+## v13.0.2（2026-11-26）
+
+### 修正
+
+- **帮助文档里「改完插件必须开新对话」是错的**：DSH 的工具集合是活的（`tools/change` 事件触发按 agent 重新 `restrict`），注册表一变，正在跑的会话下一轮就同步。**改完插件只要重启引擎**。之前那条结论是把「插件注册失败」误判成了「会话缓存」。
+- 排查口径补实：`dsh-app/diagnostics.md` 的 appErrors 段出现 `cannot get property "tools" without inject`，就是插件没声明 `inject`（v13.0.1 已修）。
+
+### 变更
+
+- 帮助文档不再抄一份名称清单 —— 手写副本会成为第二个源头、跟着漂移。只留排查必需的工具名；命名定型的记录放在本文件。
+## v13.0.1（2026-11-26）
+
+### 修正（重要）
+
+- **插件四个工具此前从未注册成功**：cordis 里没有 `inject` 声明就拿不到 `ctx.tools`，诊断日志中的「cannot get property "tools" without inject」即此。补上 `export const inject = ['tools', 'systemPrompt']` 后四个工具才会出现。
+- 插件内「打开下载页」指向 `hehe15855/DSHxpandh`（实测 404），改回真仓库 `hehe15855/DSHGoXpandh`（实测 200）。
+- `dshxpandh_inject` 描述原写「需要 root」，与代码不符：有 root 写 App 私有目录，没 root 写控制目录共享文件，只有「没 root + 开着隐身」才拒绝。`status` 输出里的同类表述一并改正。
+- `dshxpandh_logs` 的关键词原用双引号拼进 shell，含空格会被拆成两个参数；改为取回日志后在 node 侧过滤。
+
+### 变更
+
+- 14 条工具描述 884 → 752 字，系统提示声明 510 → 455 字（只删冗余，事实逐条对照代码改准）
+- **命名定型**：显示名、控制目录、插件、四个工具统一为 DSHxpandh 一族，本版起不再改名。名称的唯一源头是插件 `package.json`（name / dshGo.title）与模块常量（ROOT、PREFS、工具注册名），文档不再抄一份清单。
+## v13.0.0（2026-11-26）
+
+### 变更
+
+- **命名统一**：显示名、控制目录、插件与工具全部收敛到一个名字（显示名 `DSHxpandh`）
+  - 控制目录：`/sdcard/xhook` → `/sdcard/DSHxpandh`（不再多候选，只有 Download 兜底）
+  - 插件：`local-xhook` → `local-dshxpandh`，标题/状态条/面板 id 同步
+  - 工具：`xhook_status/script/inject/logs` → `dshxpandh_status/script/inject/logs`
+- Provider 类改名 `XhookProvider` → `DshxpandhProvider`，prefs 名 `xhook` → `dshxpandh`，调用统一走常量
+- 清理脚本改名 `dshxpandh-clean.sh`；`module.prop` 的 name 与描述同步
+
+### 修正
+
+- 审计脚本不再写死插件路径：按名字在 `dsh-go/plugins` 里自动发现，改名后不会静默失效
+- 插件 `pickRoot()` 去掉重复候选与永假分支
+## v12.9.10（2026-11-26）
+
+### 修复：心跳只跳一次就停
+
+- `ctx.effect` 收的是「返回清理函数的工厂」，我们直接把清理逻辑当参数传进去，结果它被**当场执行**——定时器刚设好就被自己清掉。表现：`apply` 走完、心跳跳一次、然后永远静止
+- 改成 `ctx.effect(() => () => {...})`。同一个 effect 还负责注销工具和面板，所以这条也影响工具可用性
+
+### 打开 DSH 立刻就连上
+
+- 光靠 60 秒定时器，刚打开 DSH 那段时间模块侧看不到连接
+- 现在 `apply` 一进来就写心跳，**任何一个工具被调用也顺手刷新**——用过一次工具，连接立刻变成新鲜的
+
+### 配套：plugin-audit 的 P12 真正生效
+
+- 原来读 `/opt/dsh/package.json` 的 version 字段，那文件里没有这个字段，一直空转
+- 改成从 `dsh --version` 取（实测 `0.2.2-rc.1`），现在能真正比对插件的 `engines.dsh` 版本要求
+## v12.9.9（2026-11-26）
+
+### 修复：引擎重启后对接插件不再加载
+
+- 根因是插件里一行 `export const inject = ['tools']`。加上它之后，引擎重启就不再加载这个插件：心跳停 27 分钟、DSH 里的四个工具全部消失，而插件代码本身没有任何问题
+- 判定依据：三个能正常工作的 dsh-go 插件（local-fish-hud / local-magpie / local-output-dir）同样调用 `ctx.tools.register`，却都没有声明 inject
+- 删掉声明后触发热重载立即恢复：`apply-hit` 写出 `apply-ok`、心跳恢复每分钟一跳
+
+### 插件健壮性：加载失败不再无声无息
+
+- **`apply-hit`**：apply 一进来就写一条（含时间戳与阶段）。有了它，「插件没加载」和「加载了但后面挂了」能一眼分开
+- **`beat-err`**：心跳写失败不再被 try/catch 静默吞掉，留一条错误痕迹
+- **隐身时不写**：stealth 开着的时候这些痕迹一个都不写
+
+### 配套：跨插件审验脚本
+
+仓库外新增 `scripts/plugin-audit.mjs`，17 项检查，其中三层判断「装没装」：文件层（目录/配置/软链）、加载层（心跳新鲜度）、功能层（真调 provider）。这次就是靠它定位到问题的
+## v12.9.8（2026-11-26）
+
+### 内置帮助：把踩过的坑写进 APK
+
+- 新增 `assets/HELP.md`（约 2800 字），按「症状 → 原因 → 解决」写清八类问题：DSH 里看不到工具、显示未连接、点释放没反应、插件装不上、注入不生效、隐身开不下发、免 root 环境、共享命令文件长什么样
+- 另附七条注意事项：别删控制目录、必须勾选并重启目标 App、隐身+无 root 的取舍、脚本同名用户优先、调试日志记得关、改版本要同步四处、DSH 重启后开新会话
+- 设置页新增「帮助与排查」卡片：五条最高频问题直接列在卡片上，底部「看完整帮助」用可滚动对话框打开全文
+- 同时把 `HELP.md` 导出到控制目录，方便复制给别人
+
+## v12.9.7（2026-11-26）
+
+### 手动入口：两边都能自己确认一次
+
+- 心跳只由 DSH 引擎写，它被系统冻结或在后台被清时会停写，卡片就会一直显示「未连接」，看起来像插件坏了
+- **模块侧**：DSH 连接卡新增「重新检测」——重读心跳，并按情况说清是「插件没装」「从没跑过」还是「心跳停在 N 分钟前（DSH 可能被冻结）」
+- **DSH 侧**：面板的「重新检测」改成「检测并上报」——点一下立刻补写一次心跳，再查模块状态，等于手动喊一声「我还在」
+
+### 适配免 root 环境（Shizuku / LSPatch 这类）
+
+- 注入命令原来写目标 App 私有目录（`/data/user/0/<pkg>/files/`），那一步必须 root；现在改走共享文件 `/sdcard/DSHxpandh/cmd-<pkg>.json`
+- `DshxpandhProvider` 新增 `getCmd`：目标进程通过 ContentProvider 取命令时，先看模块 prefs，没有再读控制目录里的共享文件（provider 跑在模块进程，有存储权限）
+- 整条链变成：谁都能写 /sdcard 上的命令文件 → 模块通过 provider 交给目标进程 → **全程不需要 root**
+- DSH 插件侧配套：`xhook_inject` 不再强制要求 psh/root，改为写共享文件
+
+## v12.9.6（2026-11-26）
+
+### 编译时同步文本，版本号不再脱节
+
+- `module.prop` 一直停在 v12.9.0/147，实际 APK 已经 153——`build.sh` 只同步了 `HookEntry` 的 `VER` 常量，从没管过 `module.prop`。现在新增 `sync-texts.mjs`，编译前把 Manifest 的 `versionName`/`versionCode` 和 `texts/description.txt` 一起写进 `module.prop`
+- 简介改为单一来源 `texts/description.txt`，改文本不用再翻两处
+
+### 应用内公告更新
+
+- 写明内置插件与四个工具，以及「不装 DSH，本模块全部功能照常手工可用」
+
+## v12.9.5（2026-11-26）
+
+### 修复：点「释放插件」没有任何反馈
+
+- 释放其实成功了（文件确实落到控制目录），但只有一个几百毫秒的 toast，卡片文字不变，看起来像没反应
+- 改成同时更新卡片状态文字：「已释放 N 项到 <路径>」
+
+### 心跳不带可识别字串
+
+- 对接插件写的心跳原来含 `local-xhook/1.0.0`，被扫到就是明确特征；现在只写时间戳
+
+## v12.9.4（2026-11-26）
+
+### 新增：DSH 对接做成一个包，装上即用
+
+- 设置页新增「DSH 连接」三态卡片：未装 DSH / 未连接 / 已连接（心跳 5 分钟阈值），整卡可点直接跳转 DSH
+- 「安装到 DSH」按钮把内置插件释放到控制目录 `dsh-plugin/`，只读不写 DSH 内部配置，出错不会弄坏引擎
+- Manifest 增加 `io.github.ccch1mneyyy.dsh_app` 包可见性声明（否则 Android 11+ 查不到 DSH 装没装）
+- **核心功能对 DSH 零依赖**：`HookEntry` 里 DSH 相关引用为 0，hook、注入、配方、脚本全部在模块内独立工作
 
 ## v12.9.3（2026-11-26）
 
@@ -23,7 +148,7 @@
 
 - 「加入脚本」只能写 /sdcard（模块 uid 写不进），改为主副本存 prefs 的 `script:<名字>`
 - 导入的脚本名带着 `primary:` 和目录前缀，只取文件名
-- `XhookProvider` 加 `xposedsharedprefs` 声明前，目标进程读模块 prefs 一直失败（`has=false`）
+- `DshxpandhProvider` 加 `xposedsharedprefs` 声明前，目标进程读模块 prefs 一直失败（`has=false`）
 
 ### 修复：界面
 
@@ -69,7 +194,7 @@
 - 三种形态自动分：`v10` 密文解密 / `value` 列明文（WebView 内核）/ `v20` App-Bound 明确报错
 - 扫描不写死浏览器名单：`/data/data/*/app_chrome|app_webview|app_u4_webview/…/Cookies` 全扫，一次扫描实测出 65 个库
 - 按站点分组折叠，每组一个「复制头」，直接得到可用的 `Cookie:` 请求头
-- 脱敏 / 明文一键切换；可导出 `/sdcard/xhook/cookies.json`
+- 脱敏 / 明文一键切换；可导出 `/sdcard/DSHxpandh/cookies.json`
 
 实测：Chrome 库 207 条 cookie 全部解出（0 失败），与参考实现逐字节一致。
 

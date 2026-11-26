@@ -28,28 +28,20 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     public static volatile boolean LOADED = false;
 
     private static final String TAG = "core";
+    // prefs 名必须与 App 侧 DshxpandhProvider.PREFS 一致；这里用同名常量，不引用模块 App 的类（避免 ClassNotFound）
+    private static final String PREFS_NAME = "dshxpandh";
     /** 本模块自己的包名：隐身 hook 必须排除它，否则会挡住自己的 su / 文件读取。改包名时只改这里。 */
     private static final String SELF = "io.github.hehe15855.dshxpandh";
     /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
     private static boolean DEBUG_LOG = false;
-    private static final String VER = "v150";
-    // 控制目录：DSH 版优先，独立使用则落到通用目录（两者都可用，不需要改代码）
+    private static final String VER = "v160";
+    // 控制目录：统一为 /sdcard/DSHxpandh（单一目录，不做多候选）
     private static final String ROOT = pickRoot();
     private static String pickRoot() {
-        // 控制目录的选择原则：
-        //   · /sdcard/DSH-Output/xhook 只有「已经有数据」时才沿用 —— 那是使用者自己的 DSH 输出目录，
-        //     不是本模块的默认位置，新用户不该被迫生成它。
-        //   · 否则落到中性目录 /sdcard/xhook。
-        //   · 都不行才退到 Download。
-        java.io.File dsh = new java.io.File("/sdcard/DSH-Output/xhook");
-        if (dsh.isDirectory()) {
-            String[] l = dsh.list();
-            if (l != null && l.length > 0) return dsh.getPath();
-        }
-        java.io.File gen = new java.io.File("/sdcard/xhook");
+        java.io.File gen = new java.io.File("/sdcard/DSHxpandh");
         if (!gen.exists()) { try { gen.mkdirs(); } catch (Throwable t) {} }
         if (gen.isDirectory()) return gen.getPath();
-        return "/sdcard/Download/xhook";
+        return "/sdcard/Download/DSHxpandh";
     }
     private static final char[] HEX = "0123456789abcdef".toCharArray();
     // 全局注入开关：这两个文件任一存在即停掉 JS 注入（删掉即恢复）
@@ -89,7 +81,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static final String[] STEALTH_PROPS = {
         "XPOSED", "LSPOSED", "LSPD", "MAGISK", "XPOSED_BRIDGE", "XPOSED_CLASS_DAG"
     };
-    private static final String OFF_SWITCH_ALT = "/data/local/tmp/xhook.off";
+    private static final String OFF_SWITCH_ALT = "/data/local/tmp/dshxpandh.off";
     private static int clamp(int v, int lo, int hi, int def) {
         if (v < lo || v > hi) return def;
         return v;
@@ -114,8 +106,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
 
     private static File findAppCfg(String pkg) {
         String[] cands = {
-            "/data/user/0/" + pkg + "/files/xhook.json",
-            "/data/data/" + pkg + "/files/xhook.json"
+            "/data/user/0/" + pkg + "/files/dshxpandh.json",
+            "/data/data/" + pkg + "/files/dshxpandh.json"
         };
         for (String p : cands) {
             try {
@@ -129,8 +121,8 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static File findCmd(String pkg) {
         String[] cands = new String[CAND.length + 2];
         cands[0] = CAND[0];
-        cands[1] = "/data/data/" + pkg + "/files/xhook.json";
-        cands[2] = "/data/user/0/" + pkg + "/files/xhook.json";
+        cands[1] = "/data/user/0/" + pkg + "/files/dshxpandh.json";
+        cands[2] = "/data/data/" + pkg + "/files/dshxpandh.json";
         cands[CAND.length + 1] = CAND[1];
         for (int i = 3; i < CAND.length + 1; i++) cands[i] = CAND[i - 2];
         for (String p : cands) {
@@ -182,7 +174,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         } catch (Throwable tt) { return; }
                     }
                 }
-            }, "xhook-beat");
+            }, "dshxpandh-beat");
             t.setDaemon(true);
             t.start();
         } catch (Throwable t) {}
@@ -198,7 +190,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
             if (ctx == null) { emit("cfg", "prefs-no-ctx"); return null; }
             android.os.Bundle b = ctx.getContentResolver().call(
-                    android.net.Uri.parse("content://" + XhookProvider.AUTHORITY),
+                    android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
                     "getScripts", null, null);
             if (b == null) { emit("cfg", "prefs-null-bundle"); return null; }
             android.os.Bundle all = b.getBundle("all");
@@ -219,8 +211,25 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
             if (ctx == null) return null;
             android.os.Bundle b = ctx.getContentResolver().call(
-                    android.net.Uri.parse("content://" + XhookProvider.AUTHORITY),
+                    android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
                     "getStr", key, null);
+            if (b == null) return null;
+            return b.getString("v");
+        } catch (Throwable t) { return null; }
+    }
+
+    /**
+     * 带参数地走配置通道。用于 getCmd：provider 会先看 prefs，没有就读控制目录里的
+     * 共享命令文件（/sdcard/DSHxpandh/cmd-<pkg>.json）。这两条路都不需要 root，
+     * 所以在 Shizuku / LSPatch 这类免 root 环境里注入也照样能下发。
+     */
+    private static String prefsCallStr(String method, String arg) {
+        try {
+            android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
+            if (ctx == null) return null;
+            android.os.Bundle b = ctx.getContentResolver().call(
+                    android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
+                    method, arg, null);
             if (b == null) return null;
             return b.getString("v");
         } catch (Throwable t) { return null; }
@@ -334,7 +343,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static String xspStr(String key) {
         try {
             de.robv.android.xposed.XSharedPreferences xp =
-                    new de.robv.android.xposed.XSharedPreferences(SELF, "xhook");
+                    new de.robv.android.xposed.XSharedPreferences(SELF, PREFS_NAME);
             xp.reload();
             return xp.getString(key, null);
         } catch (Throwable t) { return null; }
@@ -343,7 +352,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static Boolean xspBool(String key) {
         try {
             de.robv.android.xposed.XSharedPreferences xp =
-                    new de.robv.android.xposed.XSharedPreferences(SELF, "xhook");
+                    new de.robv.android.xposed.XSharedPreferences(SELF, PREFS_NAME);
             xp.reload();
             boolean has = xp.contains(key);
             boolean v = xp.getBoolean(key, false);
@@ -367,7 +376,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             android.content.Context ctx = android.app.AndroidAppHelper.currentApplication();
             if (ctx != null) {
                 android.os.Bundle b = ctx.getContentResolver().call(
-                        android.net.Uri.parse("content://" + XhookProvider.AUTHORITY),
+                        android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
                         "getBool", "stealth", null);
                 if (b != null && b.containsKey("v")) return b.getBoolean("v", false);
             }
@@ -410,18 +419,18 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             // 全局 /sdcard 放最后，否则一个文件会盖掉所有 App 的专属配置
             String src = null;
             try {
-                String u0 = "/data/user/0/" + pkg + "/files/xhook.json";
-                String dd = "/data/data/" + pkg + "/files/xhook.json";
+                String u0 = "/data/user/0/" + pkg + "/files/dshxpandh.json";
+                String dd = "/data/data/" + pkg + "/files/dshxpandh.json";
                 File fu = new File(u0), fd = new File(dd);
                 emit(pkg, "probe u0=" + fu.exists() + "/" + fu.length() + " dd=" + fd.exists() + "/" + fd.length());
             } catch (Throwable t) { emit(pkg, "probe-err " + t.getClass().getSimpleName()); }
             File f = findAppCfg(pkg);
             if (f != null) { String t = readAll(f); if (t != null && t.length() > 0) src = "#ext:" + t; }
-            // 用户自己的配置：/sdcard/Download/xhook/<包名>.json，优先于内置
+            // 用户自己的配置：/sdcard/Download/DSHxpandh/<包名>.json，优先于内置
             if (src == null) {
                 String[] mine = {
-                    "/sdcard/Download/xhook/" + pkg + ".json",
-                    "/sdcard/xhook/" + pkg + ".json"
+                    "/sdcard/Download/DSHxpandh/" + pkg + ".json",
+                    "/sdcard/DSHxpandh/" + pkg + ".json"
                 };
                 for (String mp : mine) {
                     try {
@@ -441,9 +450,9 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             if (src == null) {
                 String[] globals = {
                     ROOT + "/config.json",
-                    "/sdcard/xhook/config.json",
-                    "/sdcard/Download/xhook.json",
-                    "/data/local/tmp/xhook.json"
+                    "/sdcard/DSHxpandh/config.json",
+                    "/sdcard/Download/DSHxpandh.json",
+                    "/data/local/tmp/dshxpandh.json"
                 };
                 for (String gp : globals) {
                     try {
@@ -1204,10 +1213,13 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                             }
                         } catch (Throwable tsc) {}
                         // 指令：优先从模块的配置通道取（模块写 /sdcard 那套跟这里从没对上过）
-                        String s = prefsStr("cmd");
+                        String s = prefsCallStr("getCmd", pkg);
                         if (s == null || s.length() == 0) {
                             // 回落：目标 App 自己的私有目录（留给手工投放的场合）
-                            String[] cands = new String[]{ "/data/user/0/" + pkg + "/files/xhook.cmd.json", "/data/data/" + pkg + "/files/xhook.cmd.json" };
+                            String[] cands = new String[]{
+                                "/data/user/0/" + pkg + "/files/dshxpandh.cmd.json",
+                                "/data/data/" + pkg + "/files/dshxpandh.cmd.json"
+                            };
                             for (String pth : cands) {
                                 try {
                                     File fl = new File(pth);

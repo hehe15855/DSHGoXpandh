@@ -25,3 +25,8 @@ Thumbs.db
 # 内部开发笔记，不进公开仓库
 NOTES.md
 FRAMEWORK.md
+
+# 审计自学习状态（每次构建都变，不入库）
+audit-learned.json
+audit-history.jsonl
+misjudge.json

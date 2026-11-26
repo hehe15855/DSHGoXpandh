@@ -57,16 +57,15 @@
 
 如果对方也用 DSH（AI agent），装完只要说一句：
 
-> 我装了 DSHxpandh 模块，接口在 `/sdcard/DSH-Output/xhook/`，先读 `DSH-GUIDE.md`
+> 我装了 DSHxpandh 模块，接口在 `/sdcard/DSHxpandh/`，先读 `DSH-GUIDE.md`
 
 DSH 会自己读到：
 
 | 文件 | 内容 |
 |---|---|
-| `capabilities.json` | 全部能力：6 模式 / 12 配方 / 开关 / 9 条限制 |
-| `recipes/*.json` | 每个配方的 hook 配置，可直接 cp 到 `Download/xhook/<包名>.json` |
-| `status.json` | 版本与通道状态 |
-| `mods/` | 系统里装了哪些 Zygisk 模块 |
+| `capabilities.json` | 全部能力：6 模式 / 13 配方 / 开关 / 9 条限制 |
+| `recipes/*.json` | 每个配方的 hook 配置，可直接 cp 到 `Download/DSHxpandh/<包名>.json` |
+| `status.json` | 版本与通道状态、注入总开关 |
 
 **这些文件在你第一次打开设置页时自动导出**，不用手动准备。
 
@@ -77,7 +76,7 @@ DSH 会自己读到：
 | 来源 | 位置 | 能不能改内容 | 删了能回来吗 |
 |---|---|---|---|
 | **内置** | 打包在 APK 里，界面上带「内置」标记 | 改不了，只能开关或移除 | **能** —— 文件还在 APK 里，点「恢复被移除的内置脚本」就回来 |
-| **本地** | `/sdcard/.../xhook/scripts/` | 随便改、删、加 | **不能** —— 文件真删了，没了就是没了 |
+| **本地** | `<控制目录>/scripts/` | 随便改、删、加 | **不能** —— 文件真删了，没了就是没了 |
 
 **本地脚本删除要点两下确认**（第一下按钮变成「确认删」），因为它不可恢复。
 
@@ -87,18 +86,15 @@ DSH 会自己读到：
 
 ## 控制目录
 
-模块**自动选**目录，不用你配：
+模块固定用 `/sdcard/DSHxpandh/`，不存在就自动创建；该位置不可用时退回 `/sdcard/Download/DSHxpandh/`。
 
-1. `/sdcard/DSH-Output/xhook/` —— 非空就用它（DSH 用户）
-2. `/sdcard/xhook/` —— 否则自己建这个（独立用户）
-
-设置页底部会显示当前用的是哪个。
+设置页底部会显示当前实际路径。
 
 | 文件 | 作用 |
 |---|---|
 | `off` | 存在即停 JS 注入（删掉恢复）|
 | `stealth` | 存在即对目标 App 隐藏 Xposed 特征 |
-| `classhide` | 存在即隐藏 Xposed 类名 |
+| `classhide.off` | 存在则**不**隐藏 Xposed 类名（默认是隐藏的）|
 | `abilities/<mode>.off` | 单独关掉某个模式 |
 | `scripts/*.js` | 多脚本，`<名>.js.off` 表示停用 |
 | `cmd.json` | 一次性下发命令 `{"ts":时间戳,"js":"代码"}` |
@@ -107,7 +103,7 @@ DSH 会自己读到：
 
 ## 配置格式
 
-放 `/sdcard/Download/xhook/<包名>.json`：
+放 `/sdcard/Download/DSHxpandh/<包名>.json`：
 
 ```json
 {
@@ -129,7 +125,7 @@ DSH 会自己读到：
 3. **页面不是标准 WebView 的**，`js` 和 `cookie` 用不了。
 4. **只对 LSPosed 勾过作用域的 App 生效**，没勾的进程完全不动。
 5. **改值只影响方法调用**，已编译进底层的逻辑改不了。
-6. 日志有上限：速度看配方的 `sample`/`window_ms`（默认每秒 5 次），总量看 `max_logs`（默认 1000）—— 两者都在配方 json 里，可以自己调。
+6. 日志有上限：速度由配方的 `sample`/`window_ms` 决定（各配方不同，如 cipher-log 每秒 3 次），总量由 `max_logs` 决定（默认 1000 条）—— 都在配方 json 里，可以改。
 7. **改配置后要重启目标 App**；只有控制目录里的开关是热生效的。
 8. 模块痕迹藏不掉，专门的检测工具能发现。
 
@@ -139,7 +135,7 @@ DSH 会自己读到：
 → 90% 是没重启目标 App。强制停止再打开。
 
 **看不到日志？**
-→ LSPosed 管理器里把日志级别调成 info；模块日志前缀是 `[xhook]`。
+→ LSPosed 管理器里把日志级别调成 info；模块日志前缀是 `core`。
 
 **LSPosed 里显示「已启用」但没反应？**
 → 检查作用域勾的是不是目标 App；或者装完模块后 app 路径变了（重装过），需要在 LSPosed 里关掉模块再打开。
@@ -224,7 +220,7 @@ pm install -r /data/adb/modules/zygisk_lsposed/manager.apk
 | `AndroidManifest.xml` | `package="你的包名"` |
 | `AndroidManifest.xml` | provider 的 `android:authorities="你的包名.cfg"` |
 | `src/.../HookEntry.java` | `private static final String SELF = "你的包名"` |
-| `src/.../XhookProvider.java` | `AUTHORITY = "你的包名.cfg"` |
+| `src/.../DshxpandhProvider.java` | `AUTHORITY = "你的包名.cfg"` |
 
 另外还要把源码目录（`src/<把包名的点换成斜杠>/`）一起移过去，所有 `.java` 的 `package` 声明跟着改。
 
@@ -250,5 +246,5 @@ pm install -r /data/adb/modules/zygisk_lsposed/manager.apk
 
 ContentProvider 跑在模块 App 里，App 被系统回收后 provider 就没了。现在的兜底：
 
-- 脚本走 `/sdcard/.../scripts/` 文件回落（一直能用）
+- 脚本走 `<控制目录>/scripts/` 文件回落（一直能用）
 - 隐身开关读不到时**按开处理**（宁可多隐一层）

@@ -37,22 +37,18 @@ public class SettingsActivity extends Activity {
 
     // 控制目录：DSH 版优先，独立使用则落到通用目录
     static final String CTRL = pickRoot();
+    /** DSH Go 的包名；下载页留空时只提示，不乱跳。 */
+    /** 卡片上那行状态文字，释放插件后要能立刻更新它。 */
+    TextView dshStateView;
+    static final String DSH_PKG = "io.github.ccch1mneyyy.dsh_app";
+    static final String DSH_DL = "";
 
     static String pickRoot() {
-        // 控制目录的选择原则：
-        //   · /sdcard/DSH-Output/xhook 只有「已经有数据」时才沿用 —— 那是使用者自己的 DSH 输出目录，
-        //     不是本模块的默认位置，新用户不该被迫生成它。
-        //   · 否则落到中性目录 /sdcard/xhook。
-        //   · 都不行才退到 Download。
-        java.io.File dsh = new java.io.File("/sdcard/DSH-Output/xhook");
-        if (dsh.isDirectory()) {
-            String[] l = dsh.list();
-            if (l != null && l.length > 0) return dsh.getPath();
-        }
-        java.io.File gen = new java.io.File("/sdcard/xhook");
+        // 控制目录：统一为 /sdcard/DSHxpandh
+        java.io.File gen = new java.io.File("/sdcard/DSHxpandh");
         if (!gen.exists()) { try { gen.mkdirs(); } catch (Throwable t) {} }
         if (gen.isDirectory()) return gen.getPath();
-        return "/sdcard/Download/xhook";
+        return "/sdcard/Download/DSHxpandh";
     }
     static final String OFF = CTRL + "/off";
     static final String CMD = CTRL + "/cmd.json";
@@ -61,7 +57,7 @@ public class SettingsActivity extends Activity {
     /** 发过的指令存这里，每条一个 json（跟 cmd.json 同格式） */
     static final String CMDS = CTRL + "/cmds";
     static final String ABIL = CTRL + "/abilities";
-    static final String USERDIR = "/sdcard/Download/xhook";
+    static final String USERDIR = "/sdcard/Download/DSHxpandh";
     static final String Q = String.valueOf((char) 34);
     static final String CO = String.valueOf((char) 44);
     static final String CL = String.valueOf((char) 58);
@@ -127,7 +123,7 @@ public class SettingsActivity extends Activity {
 
     /** 用户已经选过「先不授权，受限进入」 */
     boolean permSkipped() {
-        try { return getSharedPreferences("xhook", 0).getBoolean("permSkipped", false); } catch (Throwable t) { return false; }
+        try { return getSharedPreferences(DshxpandhProvider.PREFS, 0).getBoolean("permSkipped", false); } catch (Throwable t) { return false; }
     }
 
     /**
@@ -156,7 +152,7 @@ public class SettingsActivity extends Activity {
         root.addView(sub);
 
         LinearLayout card1 = card(root, "存储权限", "MANAGE_EXTERNAL_STORAGE");
-        card1.addView(body("用于：写控制目录（/sdcard/.../xhook/），脚本、配方、导出的清单都在那儿。"));
+        card1.addView(body("用于：读写控制目录（/sdcard/DSHxpandh/），脚本、配方、能力清单都在那儿。"));
         card1.addView(body("不给会怎样：脚本读不到，配方存不了，只能看看界面。"));
 
         LinearLayout card2 = card(root, "应用列表", "安装即授予，不用手动开");
@@ -174,7 +170,7 @@ public class SettingsActivity extends Activity {
         Button limited = ghost(root, "先不授权，以受限模式进入");
         limited.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) {
-                try { getSharedPreferences("xhook", 0).edit().putBoolean("permSkipped", true).commit(); } catch (Throwable t) { }
+                try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("permSkipped", true).commit(); } catch (Throwable t) { }
                 recreate();
             }
         });
@@ -213,7 +209,7 @@ public class SettingsActivity extends Activity {
      */
     void ensureStealthDefault() {
         try {
-            android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+            android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
             if (p.getBoolean("stealthUserSet", false)) return;      // 用户自己定过，不碰
             if (!p.getBoolean("stealth", false)) {
                 p.edit().putBoolean("stealth", true).putBoolean("stealthInit", true).commit();
@@ -292,11 +288,11 @@ public class SettingsActivity extends Activity {
 
     /** 上次会话留下的探针结论 —— 打开页面先拿它顶上，不用干等 */
     boolean probeCached() {
-        try { return getSharedPreferences("xhook", 0).getBoolean("probeInjected", false); } catch (Throwable t) { return false; }
+        try { return getSharedPreferences(DshxpandhProvider.PREFS, 0).getBoolean("probeInjected", false); } catch (Throwable t) { return false; }
     }
 
     void saveProbe(boolean v) {
-        try { getSharedPreferences("xhook", 0).edit().putBoolean("probeInjected", v).apply(); } catch (Throwable t) { }
+        try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("probeInjected", v).apply(); } catch (Throwable t) { }
     }
 
     /** 最近一次探针的结论：true = 那一下新起的进程确实被注入了 */
@@ -410,7 +406,7 @@ public class SettingsActivity extends Activity {
         // 数据源统一放 prefs：有 root 时由 refreshModsViaRoot() 实时刷新，
         // 没 root 就显示上次读到的（或空），不再依赖 /sdcard 上的快照文件。
         try {
-            android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+            android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
             for (java.util.Map.Entry<String, ?> e : p.getAll().entrySet()) {
                 String k = e.getKey();
                 if (k != null && k.startsWith("mod:") && e.getValue() instanceof String) {
@@ -439,7 +435,7 @@ public class SettingsActivity extends Activity {
         String out = runRoot(cmd.toString(), 5000L);
         if (out == null) return;
         try {
-            android.content.SharedPreferences.Editor ed = getSharedPreferences(XhookProvider.PREFS, 0).edit();
+            android.content.SharedPreferences.Editor ed = getSharedPreferences(DshxpandhProvider.PREFS, 0).edit();
             for (String ln : out.split("\n")) {
                 String[] kv = ln.trim().split(" ");
                 if (kv.length == 2) ed.putString("mod:" + kv[0], kv[1]);
@@ -504,7 +500,7 @@ public class SettingsActivity extends Activity {
 
     String updUrl() {
         try {
-            String v = getSharedPreferences("xhook", 0).getString("updateUrl", "");
+            String v = getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("updateUrl", "");
             if (v != null && v.trim().length() > 0) return v.trim();
         } catch (Throwable t) { }
         return DEFAULT_UPD_URL;
@@ -570,13 +566,13 @@ public class SettingsActivity extends Activity {
     /** 调试日志开关：靠控制目录里有没有 debug 这个文件 */
     /** 只认 prefs —— 目标进程只读得到这里，之前的 /sdcard 标记文件会造成「界面开、实际关」 */
     boolean debugLogOn() {
-        try { return "1".equals(getSharedPreferences(XhookProvider.PREFS, 0).getString("debug", "")); } catch (Throwable t) { return false; }
+        try { return "1".equals(getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("debug", "")); } catch (Throwable t) { return false; }
     }
 
     void setDebugLog(boolean on) {
         File f = new File(CTRL, "debug");
         try {
-            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+            getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
                 .putString("debug", on ? "1" : "").commit();
         } catch (Throwable t) { }
         // 只删不建：状态唯一存在 prefs 里，文件那套是历史包袱，留着只会造成两套状态
@@ -652,7 +648,7 @@ public class SettingsActivity extends Activity {
         return (r * 299 + g * 587 + b * 114) / 1000 > 128;
     }
 
-    String themePref() { return getSharedPreferences("xhook", 0).getString("theme", "auto"); }
+    String themePref() { return getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("theme", "auto"); }
 
     void applyTheme() {
         String t = themePref();
@@ -666,20 +662,20 @@ public class SettingsActivity extends Activity {
     }
 
     void setThemePref(String v) {
-        getSharedPreferences("xhook", 0).edit().putString("theme", v).commit();
+        getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putString("theme", v).commit();
         recreate();
     }
 
     boolean suppressSw = false;
 
-    boolean agreed() { return getSharedPreferences("xhook", 0).getBoolean("agreed", false); }
+    boolean agreed() { return getSharedPreferences(DshxpandhProvider.PREFS, 0).getBoolean("agreed", false); }
 
-    boolean alwaysNotice() { return getSharedPreferences("xhook", 0).getBoolean("always", false); }
+    boolean alwaysNotice() { return getSharedPreferences(DshxpandhProvider.PREFS, 0).getBoolean("always", false); }
 
-    void setAlways(boolean v) { getSharedPreferences("xhook", 0).edit().putBoolean("always", v).commit(); }
+    void setAlways(boolean v) { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("always", v).commit(); }
 
     void agree() {
-        getSharedPreferences("xhook", 0).edit().putBoolean("agreed", true).commit();
+        getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("agreed", true).commit();
         recreate();
     }
 
@@ -761,18 +757,18 @@ public class SettingsActivity extends Activity {
         root.addView(sub);
 
         // 公告第一块：怎么接入 DSH（给别人看的重点）
-        LinearLayout cDsh = card(root, "接入 DSH（可选）", "如果你也用 DSH 这类 AI agent");
-        cDsh.addView(body("装完对 DSH 说这一句就行："));
-        cDsh.addView(body("「我装了 DSHxpandh 模块，接口在 " + CTRL + "/，先读 DSH-GUIDE.md」"));
+        LinearLayout cDsh = card(root, "接入 DSH（可选）", "不装 DSH，本模块全部功能照常手工可用");
+        cDsh.addView(body("内置对接插件，打开本模块就自动释放到：" + CTRL + "/dsh-plugin/"));
+        cDsh.addView(body("在终端跑一条就装好：dsh plugin --profile web add " + CTRL + "/dsh-plugin"));
+        cDsh.addView(body("装好后 DSH 里就有 dshxpandh_status / dshxpandh_script / dshxpandh_inject / dshxpandh_logs 四个工具，agent 会自己知道什么时候用，不用每次提醒。设置页的「DSH 连接」卡片会显示装没装、连没连。"));
         int recipeCount = 0;
         try {
             org.json.JSONObject cjN = caps();
             if (cjN != null) recipeCount = cjN.optJSONArray("recipes") == null ? 0 : cjN.getJSONArray("recipes").length();
         } catch (Throwable te) { }
         cDsh.addView(body("DSH 会自己读到能力清单、" + recipeCount + " 个配方和全部操作说明，然后就能替你套配方、开关能力、下发命令。"));
-        cDsh.addView(body("模块自带对接插件，装在：" + CTRL + "/dsh-plugin/"));
-        cDsh.addView(body("装法：dsh plugin --profile web add " + CTRL + "/dsh-plugin"));
-        cDsh.addView(body("如果装了 DSH，重启后聊天框上方会出现 xhook 状态条和面板（仅 dsh-go 手机版有这套界面）。"));
+        cDsh.addView(body("想重新释放一次（比如升级后），到「设置」页点「安装到 DSH」。"));
+        cDsh.addView(body("重启 DSH 引擎后，聊天框上方会出现 DSHxpandh 状态条和面板（仅 dsh-go 手机版有这套界面）。"));
 
         LinearLayout c1 = card(root, "怎么用");
         c1.addView(body("1. 在 LSPosed 里启用本模块，并勾选要 hook 的目标 App"));
@@ -924,7 +920,7 @@ public class SettingsActivity extends Activity {
                                 }
                             });
                         }
-                    }, "xhook-scoperrm").start();
+                    }, "dshxpandh-scoperrm").start();
                 }
             });
             r.addView(x);
@@ -937,11 +933,11 @@ public class SettingsActivity extends Activity {
     /** 记住非空的作用域 —— 重装 APK 后 LSPosed 会把它清空，靠这个恢复 */
     void rememberScopes(String sc) {
         if (sc == null || sc.length() == 0) return;
-        try { getSharedPreferences("xhook", 0).edit().putString("lastScopes", sc).apply(); } catch (Throwable t) { }
+        try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putString("lastScopes", sc).apply(); } catch (Throwable t) { }
     }
 
     String rememberedScopes() {
-        try { return getSharedPreferences("xhook", 0).getString("lastScopes", ""); } catch (Throwable t) { return ""; }
+        try { return getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("lastScopes", ""); } catch (Throwable t) { return ""; }
     }
 
     /**
@@ -1004,7 +1000,7 @@ public class SettingsActivity extends Activity {
                             @Override public void run() { rootPathHint.setText(msg); }
                         });
                     }
-                }, "xhook-fix2").start();
+                }, "dshxpandh-fix2").start();
             }
         });
 
@@ -1025,7 +1021,7 @@ public class SettingsActivity extends Activity {
                     }
                 });
             }
-        }, "xhook-modlist").start();
+        }, "dshxpandh-modlist").start();
 
         // ⑤ 配置库体检（一键清孤儿 + 修失效路径）
         LinearLayout c6 = card(root, "LSPosed 配置库体检", "检查 LSPosed 里登记的每个 hook 模块，它们指向的 APK 路径是否还有效。"
@@ -1059,7 +1055,7 @@ public class SettingsActivity extends Activity {
                             }
                         });
                     }
-                }, "xhook-health").start();
+                }, "dshxpandh-health").start();
             }
         });
 
@@ -1371,6 +1367,17 @@ public class SettingsActivity extends Activity {
         pageHead(pr[4], "设置",
                 "外观、隐身、底层隐藏、公告与文件位置。"
                 + "\n跟 hook 逻辑无关的部分都在这里；只有「底层隐藏」的检测会用到 Root，没 Root 时读的是外部快照。");
+        LinearLayout cHelp = card(pr[4], "帮助与排查", "遇到问题先看这里，别先怀疑模块坏了");
+        cHelp.addView(body("· DSH 里没有 dshxpandh_* 工具 → 开一个新会话（工具清单在会话创建时就定了，重启引擎也不刷新旧会话）"));
+        cHelp.addView(body("· 显示未连接 → 心跳只在 DSH 引擎运行时写；点「重新检测」，或打开 DSH 等一分钟"));
+        cHelp.addView(body("· 注入没生效 → 确认目标 App 在 LSPosed 里被勾选、勾选后重启过它、且调试日志里有 script-inject"));
+        cHelp.addView(body("· 隐身开着下发不了 → 无 root 时的设计取舍，不是故障"));
+        cHelp.addView(body("· 免 root 环境 → Shizuku 本身跑不了 Xposed，要用 LSPatch / ShizuPosed 这类 patch 框架"));
+        Button bHelp = ghost(cHelp, "看完整帮助");
+        bHelp.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { openHelp(); }
+        });
+
         LinearLayout cP = card(pr[4], "应用权限", "检查并授予模块所需的权限");
         permRow(cP, "所有文件访问权限", hasAllFiles(),
                 "写控制目录（脚本、配方、导出的清单）",
@@ -1383,6 +1390,47 @@ public class SettingsActivity extends Activity {
                 null);
 
         // 只留一个按钮：没有输入框、没有保存。更新源固定在代码里（本仓库的 version.json）。
+        boolean hasDsh = dshInstalled();
+        long dshAge = dshAliveAgeMs();
+        boolean dshOn = hasDsh && dshAge >= 0 && dshAge <= 5 * 60_000L;
+        LinearLayout cX = card(pr[4], "DSH 连接", "可选。不装 DSH，本模块全部功能照常可用");
+        TextView stX = body("");
+        if (!hasDsh) {
+            stX.setText("未安装 DSH —— 点这张卡去下载");
+            stX.setTextColor(0xffB3261E);
+        } else if (!dshOn) {
+            stX.setText(dshAge < 0
+                    ? "未连接 —— 没有心跳记录（插件没装，或 DSH 从没跑起来过）"
+                    : "未连接 —— 心跳停在 " + (dshAge / 60000) + " 分钟前");
+            stX.setTextColor(0xffB3261E);
+        } else {
+            stX.setText("已连接 —— " + (dshAge / 1000) + " 秒前的心跳");
+            stX.setTextColor(0xff1B5E20);
+        }
+        stX.setTextSize(15);
+        dshStateView = stX;
+        cX.addView(stX);
+        cX.addView(body("心跳由 DSH 里的对接插件每分钟写一次，超过 5 分钟没写就算断开。"
+                + "它只在 DSH 引擎运行时才写：DSH 被系统冻结、或在后台被清掉时，这里会显示未连接，"
+                + "那说明 DSH 没在跑，不是插件坏了。想确认就点下面「重新检测」或「打开 DSH」。"));
+        cX.addView(body("DSH 只是多一个控制端：用对话下指令、让 AI 自己读结果。"
+                + "不装 DSH，配方、自定义 hook、脚本注入、抓明文、读 Cookie 全部照常在模块里手工操作。"));
+        Button bX = primary(cX, hasDsh ? (dshOn ? "打开 DSH" : "释放对接插件") : "去下载 DSH");
+        bX.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                if (hasDsh && !dshOn) installDshPlugin();
+                else openDsh();
+            }
+        });
+        Button bRe = ghost(cX, "重新检测");
+        bRe.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { redetectDsh(); }
+        });
+        cX.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) { openDsh(); }
+        });
+        cX.addView(body("插件释放到：控制目录/dsh-plugin/。只读不写 DSH 内部配置，出错不会弄坏引擎。"));
+
         LinearLayout cU = card(pr[4], "更新", "点一下看看有没有新版本");
         cU.addView(body("当前版本 " + versionName()));
         Button bCheck = primary(cU, "检查更新");
@@ -1508,7 +1556,7 @@ public class SettingsActivity extends Activity {
                 // 不往 /sdcard 导副本 —— 内置脚本本来就在 APK 里，导出来只会让列表出现重复的两套。
                 int n = 0;
                 try {
-                    android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+                    android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
                     android.content.SharedPreferences.Editor ed = p.edit();
                     for (String k : p.getAll().keySet()) {
                         if (k.startsWith("scriptHide:") || k.startsWith("scriptOff:") || k.startsWith("scriptOn:")) {
@@ -2146,7 +2194,7 @@ public class SettingsActivity extends Activity {
         try {
             android.content.ClipboardManager c =
                     (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            c.setPrimaryClip(android.content.ClipData.newPlainText("xhook", s));
+            c.setPrimaryClip(android.content.ClipData.newPlainText("dshxpandh", s));
             toast(what + " 已复制");
         } catch (Throwable t) { toast("复制失败"); }
     }
@@ -2620,7 +2668,7 @@ public class SettingsActivity extends Activity {
      */
     void syncScriptsToPrefs() {
         try {
-            android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+            android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
             android.content.SharedPreferences.Editor ed = p.edit();
             File sd = new File(SCRIPTS);
             File[] fs = sd.listFiles();
@@ -2650,7 +2698,7 @@ public class SettingsActivity extends Activity {
         // 主副本存 prefs：/sdcard 上那个 scripts 目录属主是 DSH，模块 uid 写不进去
         boolean ok = false;
         try {
-            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+            getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
                 .putString("script:" + name, js)
                 .putString("scriptOn:" + name, "1")
                 .remove("scriptOff:" + name)
@@ -2686,7 +2734,7 @@ public class SettingsActivity extends Activity {
     void saveScriptPref(String name, boolean on) {
         try {
             // 两个键必须互斥：builtinOn 先查 scriptOn，旧键不清就永远读成「开」
-            android.content.SharedPreferences.Editor e = getSharedPreferences(XhookProvider.PREFS, 0).edit();
+            android.content.SharedPreferences.Editor e = getSharedPreferences(DshxpandhProvider.PREFS, 0).edit();
             if (on) {
                 e.putString("scriptOn:" + name, "1");
                 e.remove("scriptOff:" + name);
@@ -2768,7 +2816,7 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) { }
         // ② 用户导入的脚本：主副本在 prefs 的 script:<名字> 里，必须一并开关
         try {
-            for (java.util.Map.Entry<String, ?> e : getSharedPreferences(XhookProvider.PREFS, 0).getAll().entrySet()) {
+            for (java.util.Map.Entry<String, ?> e : getSharedPreferences(DshxpandhProvider.PREFS, 0).getAll().entrySet()) {
                 String k = e.getKey();
                 if (k == null || !k.startsWith("script:")) continue;
                 String nm = k.substring(7);
@@ -2809,14 +2857,14 @@ public class SettingsActivity extends Activity {
     /** 内置脚本被「从列表移除」过（不是真删，APK 里的还在） */
     boolean builtinHidden(String name) {
         try {
-            return "1".equals(getSharedPreferences(XhookProvider.PREFS, 0).getString("scriptHide:" + name, ""));
+            return "1".equals(getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("scriptHide:" + name, ""));
         } catch (Throwable t) { return false; }
     }
 
     /** 内置脚本的开关状态存在 prefs 里（prefs 里有 scriptOn:xxx=1 表示开过） */
     boolean builtinOn(String name) {
         try {
-            android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+            android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
             if ("1".equals(p.getString("scriptOn:" + name, ""))) return true;
             if ("1".equals(p.getString("scriptOff:" + name, ""))) return false;
         } catch (Throwable t) { }
@@ -2865,7 +2913,7 @@ public class SettingsActivity extends Activity {
                     del.setOnClickListener(new View.OnClickListener() {
                         @Override public void onClick(View v) {
                             try {
-                                getSharedPreferences(XhookProvider.PREFS, 0).edit()
+                                getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
                                     .putString("scriptHide:" + n, "1")
                                     .putString("scriptOff:" + n, "1")
                                     .commit();
@@ -2883,7 +2931,7 @@ public class SettingsActivity extends Activity {
         java.util.LinkedHashSet<String> userNames = new java.util.LinkedHashSet<String>();
         java.util.HashMap<String, Integer> userKb = new java.util.HashMap<String, Integer>();
         try {
-            for (java.util.Map.Entry<String, ?> e : getSharedPreferences(XhookProvider.PREFS, 0).getAll().entrySet()) {
+            for (java.util.Map.Entry<String, ?> e : getSharedPreferences(DshxpandhProvider.PREFS, 0).getAll().entrySet()) {
                 String k = e.getKey();
                 if (k == null || !k.startsWith("script:")) continue;
                 String nm = k.substring(7);
@@ -2943,7 +2991,7 @@ public class SettingsActivity extends Activity {
                         // 主副本在 prefs 里：删它，连开关记录一起清
                         boolean ok = false;
                         try {
-                            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+                            getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
                                 .remove("script:" + n)
                                 .remove("scriptOn:" + n)
                                 .remove("scriptOff:" + n)
@@ -2965,19 +3013,6 @@ public class SettingsActivity extends Activity {
         syncScriptsToPrefs();   // 界面刷新即同步给目标进程
     }
 
-    void writeCmdJs(String js) {
-        try {
-            File d = new File(CTRL); if (!d.exists()) d.mkdirs();
-            StringBuilder s = new StringBuilder("{");
-            s.append(Q).append("ts").append(Q).append(CL).append(System.currentTimeMillis()).append(CO);
-            s.append(Q).append("js").append(Q).append(CL).append(Q).append(esc(js)).append(Q).append("}");
-            FileOutputStream fo = new FileOutputStream(CMD, false);
-            fo.write(s.toString().getBytes("UTF-8"));
-            fo.close();
-            refresh();
-        } catch (Throwable t) { toast("写入失败"); }
-    }
-
     void cleanAlive() {
         try {
             String[] fs = new File(CTRL).list();
@@ -2991,18 +3026,57 @@ public class SettingsActivity extends Activity {
     /** 隐身开关：以 SharedPreferences 为主（目标进程走 provider 读），文件只做老版本兼容 */
     boolean stealthOn() {
         try {
-            return getSharedPreferences(XhookProvider.PREFS, 0).getBoolean("stealth", false);
+            return getSharedPreferences(DshxpandhProvider.PREFS, 0).getBoolean("stealth", false);
         } catch (Throwable t) { return false; }
     }
 
     void setStealth(boolean on) {
         // 记下「用户亲自改过」，之后就不再强制默认开
-        try { getSharedPreferences(XhookProvider.PREFS, 0).edit().putBoolean("stealthUserSet", true).commit(); } catch (Throwable t) { }
-        if (on) cleanAlive();
+        try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("stealthUserSet", true).commit(); } catch (Throwable t) { }
+        if (on) {
+            cleanAlive();
+            // 清理要跑 su 确认 root，放后台，别把开关点击卡住
+            new Thread(new Runnable() {
+                @Override public void run() {
+                    try { scrubSharedCmds(); } catch (Throwable t) { }
+                }
+            }).start();
+        }
         // 只写配置：目标进程走 provider 读，不再往 /sdcard 丢标记文件
-        try { getSharedPreferences(XhookProvider.PREFS, 0).edit().putBoolean("stealth", on).commit(); } catch (Throwable t) { }
+        try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("stealth", on).commit(); } catch (Throwable t) { }
         refresh();
         toast(on ? "隐身已开启，重启目标 App 生效" : "隐身已关闭");
+    }
+
+    /**
+     * 隐身开启时，清掉免 root 时期留在控制目录的共享命令文件。
+     * 那批文件的文件名是包名哈希、内容是混淆过的，但东西终究在盘上；
+     * 隐身要的是「不留痕迹」，而一旦有 root，命令改走目标私有目录，
+     * 这些共享文件就没有存在理由了。
+     */
+    void scrubSharedCmds() {
+        // 前提：必须确实拿到 root。没 root 时共享文件是唯一命令通道，
+        // 清掉就等于断了下发路径（路径缺失），所以先确认再动手。
+        boolean hasRoot = rootVerified;
+        if (!hasRoot) {
+            String id = runRoot("id", 5000L);
+            hasRoot = id != null && id.indexOf("uid=0") >= 0;
+        }
+        if (!hasRoot) return;   // 没 root 就静默跳过，什么都不删
+        int n = 0;
+        try {
+            File d = new File(CTRL);
+            String[] fs = d.list();
+            if (fs != null) {
+                for (String name : fs) {
+                    boolean isCmd = (name.startsWith("c-") && name.endsWith(".bin"))
+                            || (name.startsWith("cmd-") && name.endsWith(".json"));
+                    if (!isCmd) continue;
+                    try { if (new File(d, name).delete()) n++; } catch (Throwable t) { }
+                }
+            }
+        } catch (Throwable t) { }
+        if (n > 0) toast("已清理 " + n + " 个共享命令残留");
     }
 
     /**
@@ -3012,7 +3086,7 @@ public class SettingsActivity extends Activity {
     void clearAllCmds() {
         int n = 0;
         try {
-            android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+            android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
             android.content.SharedPreferences.Editor ed = p.edit();
             for (String k : p.getAll().keySet()) {
                 if (k.startsWith("cmd")) { ed.remove(k); n++; }
@@ -3039,7 +3113,7 @@ public class SettingsActivity extends Activity {
         try {
             long ts = System.currentTimeMillis();
             String body2 = "{\"ts\":" + ts + ",\"js\":\"" + esc(js) + "\"}";
-            android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+            android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
             android.content.SharedPreferences.Editor ed = p.edit();
             ed.putString("cmd", body2);              // 目标进程读这个执行
             ed.putString("cmd:" + ts, js);           // 历史，只给这个界面用
@@ -3059,7 +3133,7 @@ public class SettingsActivity extends Activity {
     void rebuildCmds() {
         if (cmdBox == null) return;
         cmdBox.removeAllViews();
-        android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
+        android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
         java.util.List<String> keys = new java.util.ArrayList<String>();
         for (String k : p.getAll().keySet()) if (k.startsWith("cmd:")) keys.add(k);
         if (keys.isEmpty()) {
@@ -3093,7 +3167,7 @@ public class SettingsActivity extends Activity {
             del.setPadding(dp(6), dp(4), dp(2), dp(4));
             del.setOnClickListener(new View.OnClickListener() {
                 @Override public void onClick(View v) {
-                    try { getSharedPreferences(XhookProvider.PREFS, 0).edit().remove(k).commit(); } catch (Throwable t) { }
+                    try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().remove(k).commit(); } catch (Throwable t) { }
                     rebuildCmds();
                     toast("已删");
                 }
@@ -3106,7 +3180,7 @@ public class SettingsActivity extends Activity {
     void refreshCmdHint() {
         if (cmdHint == null) return;
         String cmdStr = null;
-        try { cmdStr = getSharedPreferences(XhookProvider.PREFS, 0).getString("cmd", null); } catch (Throwable t) { }
+        try { cmdStr = getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("cmd", null); } catch (Throwable t) { }
         if (cmdStr != null && cmdStr.length() > 0) {
             String preview = cmdStr;
             if (preview.length() > 90) preview = preview.substring(0, 90) + "…";
@@ -3120,9 +3194,137 @@ public class SettingsActivity extends Activity {
 
     /** 写入测试指令 —— 走和「发送」同一条路，所以也会出现在下面的历史列表里 */
     void writeTest() {
-        sendCmd("document.title='xhook-test'", "测试指令已下发，去目标 App 看标题变没变");
+        sendCmd("document.title='dshxpandh-test'", "测试指令已下发，去目标 App 看标题变没变");
         refresh();
         rebuildCmds();
+    }
+
+    /**
+     * 把 assets/dsh-plugin 释放到控制目录下的 dsh-plugin/。
+     * 为什么不直接写进 DSH 的插件目录：那是 proot rootfs 里的路径，本模块没有那个应用
+     * 的私有目录权限；释放到公共目录、再让用户跑一条 dsh plugin add，出错也不会弄坏引擎。
+     */
+    /** DSH 装了没有。Manifest 里声明了包可见性，这里才查得到。 */
+    boolean dshInstalled() {
+        try { return getPackageManager().getLaunchIntentForPackage(DSH_PKG) != null; }
+        catch (Throwable t) { return false; }
+    }
+
+    /** DSH 里对接插件的心跳距今多久；-1 = 从没写过（没装插件或没跑起来）。 */
+    long dshAliveAgeMs() {
+        try {
+            File f = new File(new File(CTRL), "dsh-alive");
+            if (!f.exists()) return -1;
+            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
+            String ln = r.readLine();
+            r.close();
+            if (ln == null) return -1;
+            long ts = Long.parseLong(ln.trim());
+            long d = System.currentTimeMillis() - ts;
+            return d < 0 ? 0 : d;
+        } catch (Throwable t) { return -1; }
+    }
+
+    /** 打开 DSH；没装就去下载页。 */
+    void openDsh() {
+        if (!dshInstalled()) {
+            if (DSH_DL.length() > 0) openUrl(DSH_DL);
+            else toast("本机没装 DSH Go，且没配下载地址");
+            return;
+        }
+        try {
+            Intent i = getPackageManager().getLaunchIntentForPackage(DSH_PKG);
+            if (i != null) { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(i); return; }
+        } catch (Throwable t) {}
+        toast("打不开 DSH");
+    }
+
+
+    /**
+     * 手动重算一次 DSH 连接状态。
+     * 心跳只能由 DSH 引擎写，被系统冻结或在后台被清时会停——那时卡片会一直停在「未连接」，
+     * 看起来像插件坏了。这个按钮给一次手动确认，并按情况说清下一步该干什么。
+     */
+
+    /**
+     * 打开完整帮助。直接读 assets 里的 HELP.md（不依赖先导出到控制目录），
+     * 用可滚动对话框展示——手机上长文档只能这样看。
+     */
+    void openHelp() {
+        String txt = readAsset("HELP.md");
+        if (txt == null || txt.length() == 0) txt = "帮助文档读取失败。可以在控制目录里找 HELP.md。";
+        android.widget.ScrollView sv = new android.widget.ScrollView(this);
+        TextView tv = new TextView(this);
+        tv.setText(txt);
+        tv.setTextSize(13);
+        tv.setLineSpacing(dp(4), 1.1f);
+        tv.setPadding(dp(16), dp(16), dp(16), dp(16));
+        tv.setTextColor(TXT);
+        sv.addView(tv);
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("帮助与排查")
+                .setView(sv)
+                .setPositiveButton("知道了", null)
+                .show();
+    }
+    void redetectDsh() {
+        if (dshStateView == null) return;
+        if (!dshInstalled()) {
+            dshStateView.setText("未安装 DSH —— 点这张卡去下载");
+            dshStateView.setTextColor(0xffB3261E);
+            return;
+        }
+        long age = dshAliveAgeMs();
+        if (age < 0) {
+            dshStateView.setText("未连接 —— 没有心跳记录（插件没装，或 DSH 从没跑起来过）");
+            dshStateView.setTextColor(0xffB3261E);
+            return;
+        }
+        if (age > 5 * 60_000L) {
+            dshStateView.setText("未连接 —— 心跳停在 " + (age / 60000) + " 分钟前（DSH 可能被冻结，点「打开 DSH」）");
+            dshStateView.setTextColor(0xffB3261E);
+            return;
+        }
+        dshStateView.setText("已连接 —— " + (age / 1000) + " 秒前的心跳");
+        dshStateView.setTextColor(0xff1B5E20);
+    }
+    void installDshPlugin() {
+        try {
+            File dst = new File(new File(CTRL), "dsh-plugin");
+            copyAssetTree("dsh-plugin", dst);
+            String p = dst.getAbsolutePath();
+            int cnt = 0;
+            String[] fs2 = dst.list();
+            if (fs2 != null) cnt = fs2.length;
+            if (dshStateView != null) {
+                dshStateView.setText("已释放 " + cnt + " 项到 " + p);
+                dshStateView.setTextColor(0xff1B5E20);
+            }
+            toast("已释放到 " + p + "\n在终端执行：\ndsh plugin --profile web add " + p);
+        } catch (Throwable t) {
+            toast("释放失败：" + t);
+        }
+    }
+
+    /** 递归复制 assets 子目录；open 成功说明是文件，失败说明是目录。 */
+    void copyAssetTree(String path, File dst) throws Exception {
+        android.content.res.AssetManager am = getAssets();
+        java.io.InputStream in = null;
+        try {
+            in = am.open(path);
+            if (dst.getParentFile() != null) dst.getParentFile().mkdirs();
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(dst);
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) fo.write(buf, 0, n);
+            fo.close();
+            in.close();
+        } catch (java.io.IOException ioe) {
+            dst.mkdirs();
+            String[] kids = am.list(path);
+            if (kids == null) return;
+            for (String k : kids) copyAssetTree(path + "/" + k, new File(dst, k));
+        }
     }
 
     void toast(String s) { Toast.makeText(this, s, Toast.LENGTH_SHORT).show(); }
@@ -3148,7 +3350,7 @@ public class SettingsActivity extends Activity {
                     }
                 });
             }
-        }, "xhook-openlspd").start();
+        }, "dshxpandh-openlspd").start();
     }
 
     /**
@@ -3262,7 +3464,7 @@ public class SettingsActivity extends Activity {
                     @Override public void run() { updateBanner(); }
                 });
             }
-        }, "xhook-rootinfo").start();
+        }, "dshxpandh-rootinfo").start();
     }
 
     /** 通用的 root 执行：返回 stdout，失败返回 null（同步，必须在子线程调用） */
@@ -3601,7 +3803,7 @@ public class SettingsActivity extends Activity {
                     @Override public void run() { updateBanner(); }
                 });
             }
-        }, "xhook-rootread").start();
+        }, "dshxpandh-rootread").start();
     }
 
     /**
@@ -3659,13 +3861,13 @@ public class SettingsActivity extends Activity {
                     fo.close();
                 } catch (Throwable t) { }
             }
-        }, "xhook-rootprobe").start();
+        }, "dshxpandh-rootprobe").start();
     }
 
     /** 诊断日志存 prefs：不落 /sdcard，也不依赖 App 私有目录能否建子目录 */
     void writeLog(String tag, String msg) {
         try {
-            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+            getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
                     .putString("log:" + tag, System.currentTimeMillis() + "\n" + msg).commit();
         } catch (Throwable t) { }
     }
@@ -3790,7 +3992,7 @@ public class SettingsActivity extends Activity {
                         }
                     });
                 }
-            }, "xhook-rootwatch").start();
+            }, "dshxpandh-rootwatch").start();
             // 有 root 就勤快点（15 秒），没有就放慢到 60 秒 ——
             // 否则「每次询问」模式下会不停弹授权框
             try { getWindow().getDecorView().postDelayed(this, rootVerified ? 15000L : 60000L); } catch (Throwable t) { }
@@ -3847,7 +4049,7 @@ public class SettingsActivity extends Activity {
         bannerBody.setTextColor(subCol);
         // 目标进程读不到 /data/app，靠这里把自己的 APK 路径递过去（provider 通道）
         try {
-            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+            getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
                 .putString("selfApk", getPackageCodePath())
                 .commit();
         } catch (Throwable t) { }
@@ -3935,7 +4137,7 @@ public class SettingsActivity extends Activity {
                     }
                 });
             }
-        }, "xhook-autofix").start();
+        }, "dshxpandh-autofix").start();
         getWindow().getDecorView().postDelayed(bannerTick, 5000L);
         getWindow().getDecorView().postDelayed(rootWatch, 1500L);
     }
@@ -3957,7 +4159,7 @@ public class SettingsActivity extends Activity {
         if (statusLabel != null) {
             String cmdState = "无";
             try {
-                String cs = getSharedPreferences(XhookProvider.PREFS, 0).getString("cmd", null);
+                String cs = getSharedPreferences(DshxpandhProvider.PREFS, 0).getString("cmd", null);
                 if (cs != null && cs.length() > 0) cmdState = Math.max(1, cs.length() / 1024) + "KB";
             } catch (Throwable t) { }
             statusLabel.setText(off ? "已关闭 · 通道停，能力栏的 hook 照常" : "已开启 · 当前指令 " + cmdState);
@@ -4047,9 +4249,10 @@ public class SettingsActivity extends Activity {
             } catch (Throwable t) { }
             writeIfChanged(new File(d, "capabilities.json"), capJson);
             writeIfChanged(new File(d, "DSH-GUIDE.md"), readAsset("DSH-GUIDE.md"));
+            writeIfChanged(new File(d, "HELP.md"), readAsset("HELP.md"));
             writeIfChanged(new File(d, "写脚本指南.md"), readAsset("写脚本指南.md"));
             exportAssetTree("dsh-plugin", new File(d, "dsh-plugin"));
-            writeIfChanged(new File(d, "xhook-clean.sh"), readAsset("xhook-clean.sh"));
+            writeIfChanged(new File(d, "dshxpandh-clean.sh"), readAsset("dshxpandh-clean.sh"));
             String[] rs = null;
             try { rs = getAssets().list("recipes"); } catch (Throwable t0) {}
             if (rs != null && rs.length > 0) {

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.hehe15855.dshxpandh"
-    android:versionCode="150"
-    android:versionName="12.9.3">
+    android:versionCode="160"
+    android:versionName="13.0.2">
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
@@ -15,8 +15,10 @@
         <package android:name="com.sukisu.nova"/>
         <package android:name="me.weishu.kernelsu"/>
         <package android:name="com.topjohnwu.magisk"/>
+        <!-- DSH Go：对接插件跑在它里面，要能判断装没装、能不能拉起 -->
+        <package android:name="io.github.ccch1mneyyy.dsh_app"/>
     </queries>
-    <application android:label="DSHGoXpandh" android:hasCode="true">
+    <application android:label="DSHxpandh" android:hasCode="true">
         <meta-data android:name="xposedmodule" android:value="true"/>
         <meta-data android:name="xposeddescription" android:value="运行时可开关的 hook 框架：日志/改值/注入网页 JS"/>
         <meta-data android:name="xposedminversion" android:value="93"/>
@@ -36,7 +38,7 @@
         <!-- 配置跨进程通道：目标进程过来读配置，不走 /sdcard。
              不设 readPermission —— 目标 App 用的是它自己的 uid，拿不到本模块的 signature 权限 -->
         <provider
-            android:name=".XhookProvider"
+            android:name=".DshxpandhProvider"
             android:authorities="io.github.hehe15855.dshxpandh.cfg"
             android:exported="true"
             android:enabled="true"/>

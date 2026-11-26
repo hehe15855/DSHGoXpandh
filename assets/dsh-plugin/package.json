@@ -1,6 +1,6 @@
 {
-  "name": "local-xhook",
-  "version": "0.2.1",
+  "name": "local-dshxpandh",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
@@ -15,27 +15,27 @@
   "dshGo": {
     "v": 1,
     "title": {
-      "zh": "xhook",
-      "en": "xhook"
+      "zh": "DSHxpandh",
+      "en": "DSHxpandh"
     },
-    "icon": "folder",
+    "icon": "bolt",
     "wants": [],
     "contributes": {
       "composer.strip": [
         {
-          "id": "xhook-strip",
-          "icon": "folder",
-          "panel": "xhook-panel"
+          "id": "dshxpandh-strip",
+          "icon": "bolt",
+          "panel": "dshxpandh-panel"
         }
       ],
       "panels": [
         {
-          "id": "xhook-panel",
+          "id": "dshxpandh-panel",
           "title": {
-            "zh": "xhook",
-            "en": "xhook"
+            "zh": "DSHxpandh · 注入能力",
+            "en": "DSHxpandh"
           },
-          "icon": "folder",
+          "icon": "bolt",
           "placement": [
             "session.tab",
             "features"

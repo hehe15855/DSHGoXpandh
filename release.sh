@@ -9,6 +9,7 @@
 #   ./release.sh --go   核对通过后真的发（外发，得有人点头才用这个参数）
 set -u
 D=$(cd "$(dirname "$0")" && pwd); cd "$D"
+# 远端仓库真名是 DSHGoXpandh，别跟显示名一起改，改了更新检查就断
 REPO=${REPO:-hehe15855/DSHGoXpandh}
 GO=0; [ "${1:-}" = "--go" ] && GO=1
 
@@ -45,16 +46,16 @@ fi
 
 echo
 echo '[4/4] 发布'
-APK="DSHGoXpandh-$TAG.apk"
+APK="DSHxpandh-$TAG.apk"
 echo "gh release create $TAG --repo $REPO \\"
-echo "  --title \"DSHGoXpandh $TAG\" --generate-notes \\"
+echo "  --title \"DSHxpandh $TAG\" --generate-notes \\"
 echo "  \"/tmp/$APK#$APK\""
 
 if [ "$GO" = 1 ]; then
   echo
   echo '→ 执行'
   cp mod_signed.apk "/tmp/$APK" || exit 5
-  gh release create "$TAG" --repo "$REPO" --title "DSHGoXpandh $TAG" \
+  gh release create "$TAG" --repo "$REPO" --title "DSHxpandh $TAG" \
     --generate-notes "/tmp/$APK#$APK" || exit 5
   echo
   echo '发完。再跑一次 ./verify-release.sh，第 2 行应该变成 ✓'

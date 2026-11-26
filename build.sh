@@ -33,7 +33,15 @@ echo "package: $PKG"
 HE=$(find $D/src -name HookEntry.java | head -1)
 [ -z "$HE" ] && { echo "HookEntry.java not found under $D/src"; exit 1; }
 sed -i "s/VER = \"v[0-9]*\"/VER = \"v$VC\"/" "$HE"
+
 echo "version sync: v$VC"
+# 文本同步：module.prop 的 version/versionCode/description 跟着 Manifest 与 texts/ 走
+node "$D/sync-texts.mjs" "$D"
+# 源码级审验：缺失/遗漏/冲突/重复/语义/优化，未过不许打包
+# 源码审验。退出码约定：0=通过 / 1=真问题（中止）/ 其他=脚本自身故障（只警告，不阻断）
+node "$D/audit.mjs" "$D" --pre; AUDIT_RC=$?
+if [ "$AUDIT_RC" = "1" ]; then echo "❌ 源码审验发现问题，中止打包"; exit 1; fi
+if [ "$AUDIT_RC" != "0" ]; then echo "⚠️ 审验脚本自身故障（rc=$AUDIT_RC），跳过闸门继续打包 —— 规则坏了不能挡住发布"; fi
 rm -rf $D/classes $D/dexout $D/res.zip
 mkdir -p $D/classes $D/dexout $D/assets
 [ -d $D/res/values ] && aapt2 compile --dir $D/res -o $D/res.zip
@@ -52,3 +60,7 @@ zipalign -f -p 4 $D/mod.apk $D/mod_al.apk
 apksigner sign --ks $KS --ks-pass pass:${KS_PASS:-123456} --key-pass pass:${KS_PASS:-123456} \
   --out $D/mod_signed.apk $D/mod_al.apk
 apksigner verify $D/mod_signed.apk && echo "✅ $D/mod_signed.apk $(stat -c%s $D/mod_signed.apk) bytes"
+# 产物级审验：只查 APK 里到底是什么
+# 产物审验同理：脚本故障只警告
+node "$D/audit.mjs" "$D" --post; POST_RC=$?
+if [ "$POST_RC" != "0" ]; then echo "⚠️ 产物审验有告警或脚本故障（rc=$POST_RC）"; fi

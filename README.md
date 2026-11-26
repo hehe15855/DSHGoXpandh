@@ -1,4 +1,4 @@
-# DSHGoXpandh
+# DSHxpandh
 
 [![LSPosed](https://img.shields.io/badge/LSPosed-API%2093%2B-blue)](https://github.com/LSPosed/LSPosed)
 [![Android](https://img.shields.io/badge/Android-8.0%2B-green)](https://developer.android.com)
@@ -31,10 +31,10 @@ DSH Go 本身跑在手机里，但它看不见别的 App 内部：微信发了�
 
 ## 怎么接
 
-模块把能力清单和操作说明导出到**控制目录**——默认 `/sdcard/xhook/`；如果你本来就有 `/sdcard/DSH-Output/xhook/`，会沿用它；两个都不行退回 `/sdcard/Download/xhook/`。DSH Go 读到 `DSH-GUIDE.md` 就知道全部接口，然后能自己完成这些事：
+模块把能力清单和操作说明导出到**控制目录**——默认 `/sdcard/DSHxpandh/`；如果你本来就有 `/sdcard/DSHxpandh/`，会沿用它；两个都不行退回 `/sdcard/Download/DSHxpandh/`。DSH Go 读到 `DSH-GUIDE.md` 就知道全部接口，然后能自己完成这些事：
 
 ```
-「我装了 DSHGoXpandh，接口在 /sdcard/xhook/，先读 DSH-GUIDE.md」
+「我装了 DSHxpandh，接口在 /sdcard/DSHxpandh/，先读 DSH-GUIDE.md」
 ```
 
 也自带一个 DSH 插件（`dsh-plugin/`），装上后聊天框上方会出现状态条和面板。
@@ -147,7 +147,7 @@ bash build.sh
 ```
 src/…/HookEntry.java        目标进程里的 hook 逻辑（注入、隐身）
 src/…/SettingsActivity.java 设置界面
-src/…/XhookProvider.java    跨进程配置通道
+src/…/DshxpandhProvider.java    跨进程配置通道
 src/…/AppPickerDialog.java  应用选择器
 src/…/ProbeService.java     探针服务
 src/…/CookieVault.java      Cookie 解密（v10 / 明文 / v20 检测）
