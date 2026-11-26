@@ -117,10 +117,13 @@ public class SettingsActivity extends Activity {
         ensureStealthDefault();
         if (!agreed()) { showNotice(true); return; }
         if (alwaysNotice()) { showNotice(false); return; }
-        // 公告之后：没给存储权限就先引导一次；用户可以选择「受限进入」，之后不再打扰
-        if (!hasAllFiles() && !permSkipped()) { showPermGuide(); return; }
+        // 公告之后：存储或应用列表任一没给就先引导一次；用户可以选择「受限进入」，之后不再打扰
+        if (!(hasAllFiles() && hasQueryAll()) && !permSkipped()) { showPermGuide(); return; }
         buildMain();
     }
+
+    /** 当前界面是不是停在权限引导页（用于回到前台时自动重判） */
+    private boolean onPermGuide = false;
 
     /** 用户已经选过「先不授权，受限进入」 */
     boolean permSkipped() {
@@ -132,6 +135,7 @@ public class SettingsActivity extends Activity {
      * 三个出口：去授权 / 受限进入（不再提示）/ 稍后（下次还会问）
      */
     void showPermGuide() {
+        onPermGuide = true;
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(BG);
@@ -564,25 +568,20 @@ public class SettingsActivity extends Activity {
     }
 
     /** 调试日志开关：靠控制目录里有没有 debug 这个文件 */
+    /** 只认 prefs —— 目标进程只读得到这里，之前的 /sdcard 标记文件会造成「界面开、实际关」 */
     boolean debugLogOn() {
-        try { return new File(CTRL, "debug").exists(); } catch (Throwable t) { return false; }
+        try { return "1".equals(getSharedPreferences(XhookProvider.PREFS, 0).getString("debug", "")); } catch (Throwable t) { return false; }
     }
 
     void setDebugLog(boolean on) {
         File f = new File(CTRL, "debug");
         try {
-            if (on) {
-                File d = new File(CTRL);
-                if (!d.exists()) d.mkdirs();
-                if (!f.exists()) f.createNewFile();
-                toast("调试日志已开启，重启目标 App 后生效");
-            } else {
-                boolean del = f.exists() && f.delete();
-                toast(del ? "已关闭，标记文件已删除" : "已关闭");
-            }
-        } catch (Throwable t) {
-            toast("操作失败：" + t.getClass().getSimpleName());
-        }
+            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+                .putString("debug", on ? "1" : "").commit();
+        } catch (Throwable t) { }
+        // 只删不建：状态唯一存在 prefs 里，文件那套是历史包袱，留着只会造成两套状态
+        try { if (f.exists()) f.delete(); } catch (Throwable t) { }
+        toast(on ? "调试日志已开启，重启目标 App 后生效" : "已关闭");
     }
 
     /** QUERY_ALL_PACKAGES 是不是有效 */
@@ -1409,7 +1408,7 @@ public class SettingsActivity extends Activity {
         });
         dRow.addView(swD);
         cD.addView(body("打开后，即使隐身开着也会把 hook 过程写进 logcat（adb logcat | grep core 能看到）。"));
-        cD.addView(body("关闭时会自动删除控制目录里的标记文件，日志立刻恢复静默。"));
+        cD.addView(body("关闭后立刻不再写入新日志；已经产生的记录在 LSPosed 的日志里，模块不碰那个目录。"));
 
         LinearLayout cA = card(pr[4], "外观", "背景色跟随系统或自己选");
         LinearLayout seg = row(cA);
@@ -2566,6 +2565,12 @@ public class SettingsActivity extends Activity {
             else toast("写入失败，检查存储权限");
         } else {
             String base = name.length() == 0 ? ("script-" + System.currentTimeMillis()) : name;
+            // 文件选择器给的 lastPathSegment 可能带 "primary:" 和目录，只留文件名
+            int sl = base.lastIndexOf('/');
+            if (sl >= 0) base = base.substring(sl + 1);
+            int cl2 = base.indexOf(':');
+            if (cl2 >= 0) base = base.substring(cl2 + 1);
+            if (base.length() == 0) base = "script-" + System.currentTimeMillis();
             if (!base.toLowerCase().endsWith(".js")) base = base + ".js";
             writeScript(base, text);
         }
@@ -2617,12 +2622,10 @@ public class SettingsActivity extends Activity {
         try {
             android.content.SharedPreferences p = getSharedPreferences(XhookProvider.PREFS, 0);
             android.content.SharedPreferences.Editor ed = p.edit();
-            // 先清掉上一轮的 script: 键，避免删掉的脚本还在
-            for (String k : p.getAll().keySet()) {
-                if (k != null && k.startsWith("script:")) ed.remove(k);
-            }
             File sd = new File(SCRIPTS);
             File[] fs = sd.listFiles();
+            // 目录读不到就直接返回。绝不能在这里清 prefs 的 script: 键——
+            // 那会把用户「加入脚本」导入的副本一并吃光（/sdcard 属主是 DSH，模块读不到目录）。
             if (fs != null) {
                 java.util.Arrays.sort(fs, new java.util.Comparator<File>() {
                     @Override public int compare(File a, File b) { return a.getName().compareTo(b.getName()); }
@@ -2644,14 +2647,26 @@ public class SettingsActivity extends Activity {
     }
 
     void writeScript(String name, String js) {
+        // 主副本存 prefs：/sdcard 上那个 scripts 目录属主是 DSH，模块 uid 写不进去
+        boolean ok = false;
+        try {
+            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+                .putString("script:" + name, js)
+                .putString("scriptOn:" + name, "1")
+                .remove("scriptOff:" + name)
+                .commit();
+            ok = true;
+        } catch (Throwable t) { }
+        // 顺手往目录写一份，方便外部编辑；写不进去不影响功能
         try {
             File d = new File(SCRIPTS); if (!d.exists()) d.mkdirs();
             FileOutputStream fo = new FileOutputStream(new File(d, name), false);
             fo.write(js.getBytes("UTF-8"));
             fo.close();
-            refresh();
-            toast("已加入 " + name);
-        } catch (Throwable t) { toast("写入失败，检查存储权限"); }
+        } catch (Throwable t) { }
+        refresh();
+        if (ok) toast("已加入 " + name + "（存在模块配置里）");
+        else toast("写入失败");
     }
 
     void setAbility(String key, boolean on) {
@@ -2667,7 +2682,24 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) {}
     }
 
+    /** 开关状态统一存 prefs：/sdcard 上的 scripts 目录属主是 DSH，模块 uid（10381）写不进去 */
+    void saveScriptPref(String name, boolean on) {
+        try {
+            // 两个键必须互斥：builtinOn 先查 scriptOn，旧键不清就永远读成「开」
+            android.content.SharedPreferences.Editor e = getSharedPreferences(XhookProvider.PREFS, 0).edit();
+            if (on) {
+                e.putString("scriptOn:" + name, "1");
+                e.remove("scriptOff:" + name);
+            } else {
+                e.putString("scriptOff:" + name, "1");
+                e.remove("scriptOn:" + name);
+            }
+            e.commit();
+        } catch (Throwable t) { }
+    }
+
     void toggleScript(String name, boolean on) {
+        saveScriptPref(name, on);
         try {
             File f = new File(SCRIPTS, name + ".off");
             if (on) { if (f.exists()) f.delete(); }
@@ -2675,8 +2707,8 @@ public class SettingsActivity extends Activity {
                 File d = new File(SCRIPTS); if (!d.exists()) d.mkdirs();
                 if (!f.exists()) f.createNewFile();
             }
-            toast(name + (on ? " 已启用" : " 已停用"));
-        } catch (Throwable t) {}
+        } catch (Throwable t) { }
+        toast(name + (on ? " 已启用" : " 已停用"));
         rebuildScripts();
     }
 
@@ -2714,15 +2746,47 @@ public class SettingsActivity extends Activity {
     }
 
     void setAllScripts(boolean on) {
-        File sd = new File(SCRIPTS);
-        File[] fs = sd.listFiles();
-        if (fs != null) {
-            for (File f : fs) {
-                String n = f.getName();
-                if (!n.endsWith(".js")) continue;
-                toggleScript(n, on);
+        // ① 内置脚本：APK assets 里那些
+        //    外观类两个互斥（都改整页样式，同时开必然互相覆盖），全开时只留一个
+        try {
+            String[] bn = getAssets().list("scripts");
+            if (bn != null) {
+                boolean anyAppearOn = builtinOn("示例2-网页反色.js") || builtinOn("暗色模式.js");
+                for (String n : bn) {
+                    if (n == null || !n.endsWith(".js")) continue;
+                    if (builtinHidden(n)) continue;
+                    boolean isAppear = n.equals("示例2-网页反色.js") || n.equals("暗色模式.js");
+                    if (isAppear) {
+                        if (!on) saveScriptPref(n, false);
+                        else if (!anyAppearOn) saveScriptPref(n, n.equals("示例2-网页反色.js"));
+                        // 已经有外观脚本开着：保持原样，不抢
+                        continue;
+                    }
+                    saveScriptPref(n, on);
+                }
             }
-        }
+        } catch (Throwable t) { }
+        // ② 用户导入的脚本：主副本在 prefs 的 script:<名字> 里，必须一并开关
+        try {
+            for (java.util.Map.Entry<String, ?> e : getSharedPreferences(XhookProvider.PREFS, 0).getAll().entrySet()) {
+                String k = e.getKey();
+                if (k == null || !k.startsWith("script:")) continue;
+                String nm = k.substring(7);
+                if (nm.length() == 0) continue;
+                saveScriptPref(nm, on);
+            }
+        } catch (Throwable t) { }
+        // ③ scripts 目录里的文件（读不到就跳过，不影响前两类）
+        try {
+            File[] fs = new File(SCRIPTS).listFiles();
+            if (fs != null) {
+                for (File f : fs) {
+                    String n = f.getName();
+                    if (n == null || !n.endsWith(".js")) continue;
+                    saveScriptPref(n, on);
+                }
+            }
+        } catch (Throwable t) { }
         rebuildScripts();
         toast(on ? "全部脚本已开启" : "全部脚本已关闭");
     }
@@ -2760,11 +2824,7 @@ public class SettingsActivity extends Activity {
     }
 
     void setBuiltinOn(String name, boolean on) {
-        try {
-            getSharedPreferences(XhookProvider.PREFS, 0).edit()
-                .putString(on ? "scriptOn:" + name : "scriptOff:" + name, "1")
-                .commit();
-        } catch (Throwable t) { }
+        saveScriptPref(name, on);
         toast(name + (on ? " 已启用" : " 已停用"));
     }
 
@@ -2784,7 +2844,8 @@ public class SettingsActivity extends Activity {
                     any = true;
                     LinearLayout r = row(scriptBox);
                     TextView t = new TextView(this);
-                    t.setText(n + "  内置");
+                    boolean isAppear = n.equals("示例2-网页反色.js") || n.equals("暗色模式.js");
+                    t.setText(n + "  内置" + (isAppear ? " · 外观互斥" : ""));
                     t.setTextSize(12);
                     t.setTextColor(SUB);
                     r.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
@@ -2818,23 +2879,42 @@ public class SettingsActivity extends Activity {
             }
         } catch (Throwable t) { }
 
-        File sd = new File(SCRIPTS);
-        if (!sd.exists()) { try { sd.mkdirs(); } catch (Throwable t) {} }
-        File[] fs = sd.listFiles();
-        if (fs != null) {
-            for (File f : fs) {
-                final String n = f.getName();
-                if (!n.endsWith(".js")) continue;
+        // ② 用户脚本：prefs 里的（script:<名字>，主副本）+ scripts 目录里的文件，合并去重
+        java.util.LinkedHashSet<String> userNames = new java.util.LinkedHashSet<String>();
+        java.util.HashMap<String, Integer> userKb = new java.util.HashMap<String, Integer>();
+        try {
+            for (java.util.Map.Entry<String, ?> e : getSharedPreferences(XhookProvider.PREFS, 0).getAll().entrySet()) {
+                String k = e.getKey();
+                if (k == null || !k.startsWith("script:")) continue;
+                String nm = k.substring(7);
+                if (nm.length() == 0 || !(e.getValue() instanceof String)) continue;
+                userNames.add(nm);
+                userKb.put(nm, Integer.valueOf(Math.max(1, ((String) e.getValue()).length() / 1024)));
+            }
+        } catch (Throwable t) { }
+        try {
+            File[] fs2 = new File(SCRIPTS).listFiles();
+            if (fs2 != null) {
+                for (File f2 : fs2) {
+                    String nm = f2.getName();
+                    if (nm == null || !nm.endsWith(".js")) continue;
+                    userNames.add(nm);
+                    if (!userKb.containsKey(nm)) userKb.put(nm, Integer.valueOf((int) Math.max(1L, f2.length() / 1024L)));
+                }
+            }
+        } catch (Throwable t) { }
+        {
+            for (final String n : userNames) {
                 any = true;
                 LinearLayout r = row(scriptBox);
                 TextView t = new TextView(this);
-                long kb = Math.max(1, f.length() / 1024);
+                long kb = userKb.containsKey(n) ? userKb.get(n).longValue() : 1;
                 t.setText(n + "  " + kb + "KB");
                 t.setTextSize(12);
                 t.setTextColor(TXT);
                 r.addView(t, new LinearLayout.LayoutParams(0, -2, 1f));
                 Switch sw = new Switch(this);
-                sw.setChecked(!new File(sd, n + ".off").exists());
+                sw.setChecked(builtinOn(n));
                 sw.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
                     public void onCheckedChanged(CompoundButton v, boolean checked) { toggleScript(n, checked); }
                 });
@@ -2860,8 +2940,20 @@ public class SettingsActivity extends Activity {
                             } catch (Throwable t) { }
                             return;
                         }
-                        boolean ok = new File(sd, n).delete();
-                        new File(sd, n + ".off").delete();
+                        // 主副本在 prefs 里：删它，连开关记录一起清
+                        boolean ok = false;
+                        try {
+                            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+                                .remove("script:" + n)
+                                .remove("scriptOn:" + n)
+                                .remove("scriptOff:" + n)
+                                .commit();
+                            ok = true;
+                        } catch (Throwable t) { }
+                        try {
+                            new File(new File(SCRIPTS), n).delete();
+                            new File(new File(SCRIPTS), n + ".off").delete();
+                        } catch (Throwable t) { }
                         rebuildScripts();
                         toast(ok ? "已删除 " + n + "（不可恢复）" : "删不掉：" + n);
                     }
@@ -3753,20 +3845,35 @@ public class SettingsActivity extends Activity {
             bannerIcon.setTextColor(fgCol);
         }
         bannerBody.setTextColor(subCol);
+        // 目标进程读不到 /data/app，靠这里把自己的 APK 路径递过去（provider 通道）
+        try {
+            getSharedPreferences(XhookProvider.PREFS, 0).edit()
+                .putString("selfApk", getPackageCodePath())
+                .commit();
+        } catch (Throwable t) { }
 
         StringBuilder sb2 = new StringBuilder();
         sb2.append("版本：").append(versionName());
         String[] info = rootInfo;
-        if (info != null) {
-            if (info.length > 0 && info[0].length() > 0) sb2.append("\n框架版本：LSPosed ").append(info[0]);
-            if (info.length > 1 && info[1].length() > 0) sb2.append("\nRoot 来源：KernelSU ").append(info[1]);
+        boolean gotFw = info != null && info.length > 0 && info[0] != null && info[0].length() > 0;
+        boolean gotRootSrc = info != null && info.length > 1 && info[1] != null && info[1].length() > 0;
+        if (gotFw) {
+            sb2.append("\n框架：LSPosed ").append(info[0]);
         } else {
-            sb2.append("\n框架版本：读取中…");
+            // 读不到就别一直挂「读取中…」：区分「还在读」和「根本没 Root 可读」
+            sb2.append("\n框架：").append(rootVerified ? "读取中…" : "读不到（没有 Root，或配置库不可读）");
+        }
+        if (gotRootSrc) {
+            sb2.append("\nRoot：已授予 · KernelSU ").append(info[1]);
+        } else if (rootVerified) {
+            sb2.append("\nRoot：已授予");
+        } else {
+            sb2.append("\nRoot：读不到（不影响 hook；SukiSU 里能看到授权就是好的）");
         }
         if (connected) {
             sb2.append("\n✓ LSPosed 已启用本模块（hook 会正常跑）");
             if (hasRoot) sb2.append("\n✓ Root 权限已授予");
-            else sb2.append("\n⚠ 没有 Root 权限：只少了「直读框架状态」和「一键打开 LSPosed」，hook 不受影响");
+            else sb2.append("\n⚠ 读不到 Root：少了「直读框架状态」和「一键打开 LSPosed」，hook 不受影响");
             if (targetOk) sb2.append("\n已注入：").append(alive);
             else sb2.append("\n作用域的 App 还没启动，启动后即生效");
         } else {
@@ -3779,7 +3886,7 @@ public class SettingsActivity extends Activity {
             }
             // Root 只是增强，明说丢了什么、没丢什么
             if (hasRoot) sb2.append("\n✓ Root 权限已授予");
-            else sb2.append("\n⚠ 没有 Root 权限：只少了「直读框架状态」和「一键打开 LSPosed」，不影响 hook");
+            else sb2.append("\n⚠ 读不到 Root：少了「直读框架状态」和「一键打开 LSPosed」，不影响 hook");
         }
         sb2.append("\n注入 ").append(off ? "关" : "开")
            .append(" · 隐身 ").append(stealthOn() ? "开" : "关")
@@ -3790,6 +3897,12 @@ public class SettingsActivity extends Activity {
 
     @Override protected void onResume() {
         super.onResume();
+        // 刚从系统设置授权回来：两项都齐了就别再停在引导页，直接重建进主界面
+        if (onPermGuide && hasAllFiles() && hasQueryAll()) {
+            onPermGuide = false;
+            recreate();
+            return;
+        }
         refresh();
         // 每次回到页面都同步一次脚本：外部改过 scripts/*.off 也能跟上
         try { syncScriptsToPrefs(); } catch (Throwable t) { }

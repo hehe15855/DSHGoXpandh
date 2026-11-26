@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.hehe15855.dshxpandh"
-    android:versionCode="148"
-    android:versionName="12.9.1">
+    android:versionCode="150"
+    android:versionName="12.9.3">
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
@@ -20,6 +20,9 @@
         <meta-data android:name="xposedmodule" android:value="true"/>
         <meta-data android:name="xposeddescription" android:value="运行时可开关的 hook 框架：日志/改值/注入网页 JS"/>
         <meta-data android:name="xposedminversion" android:value="93"/>
+        <!-- 没有这一行，XSharedPreferences 在目标进程里读不到模块的 prefs，
+             所有脚本开关会静默退回默认值（关不掉也开不了） -->
+        <meta-data android:name="xposedsharedprefs" android:value="true"/>
         <meta-data android:name="xposedscope" android:resource="@array/xscope"/>
         <meta-data android:name="io.github.libxposed.service.XposedProvider" android:value="io.github.hehe15855.dshxpandh.HookEntry"/>
         <activity android:name=".SettingsActivity" android:exported="true" android:label="DSHxpandh" android:theme="@android:style/Theme.DeviceDefault.NoActionBar">

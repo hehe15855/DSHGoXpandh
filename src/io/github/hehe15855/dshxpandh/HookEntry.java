@@ -32,7 +32,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static final String SELF = "io.github.hehe15855.dshxpandh";
     /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
     private static boolean DEBUG_LOG = false;
-    private static final String VER = "v148";
+    private static final String VER = "v150";
     // 控制目录：DSH 版优先，独立使用则落到通用目录（两者都可用，不需要改代码）
     private static final String ROOT = pickRoot();
     private static String pickRoot() {
@@ -230,6 +230,27 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
      * 内置脚本：直接从模块 APK 的 assets/scripts/ 读。
      * 这样 /sdcard 上不用放副本，用户想加自己的再放那儿。
      */
+    /** 在 /data/app 下按包名前缀找模块自己的 base.apk（整个目录 world-readable，目标进程也读得到） */
+    private static String findModuleApk() {
+        try {
+            java.io.File[] lv1 = new java.io.File("/data/app").listFiles();
+            if (lv1 == null) return null;
+            for (java.io.File a : lv1) {
+                if (a == null) continue;
+                java.io.File[] lv2 = a.listFiles();
+                if (lv2 == null) continue;
+                for (java.io.File b : lv2) {
+                    if (b == null) continue;
+                    String nm = b.getName();
+                    if (nm == null || !nm.startsWith(SELF)) continue;
+                    java.io.File apk = new java.io.File(b, "base.apk");
+                    if (apk.exists()) return apk.getAbsolutePath();
+                }
+            }
+        } catch (Throwable t) { }
+        return null;
+    }
+
     private static java.util.Map<String, String> builtinScripts() {
         java.util.Map<String, String> m = new java.util.LinkedHashMap<String, String>();
         java.util.zip.ZipFile z = null;
@@ -238,7 +259,21 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
             try {
                 apk = HookEntry.class.getProtectionDomain().getCodeSource().getLocation().getPath();
             } catch (Throwable t) { }
-            if (apk == null || apk.length() == 0) return m;
+            // 在目标 App 进程里 getCodeSource 可能指向宿主 APK，读它当然没有 assets/scripts/。
+            // 路径里不含模块包名就当它不可信，改成扫 /data/app 找模块自己的 APK。
+            if (apk == null || apk.length() == 0 || apk.indexOf(SELF) < 0) {
+                // /data/app 在目标进程里通常读不到（SELinux），改成问模块的 provider 要路径
+                String fromPref = prefsStr("selfApk");
+                if (fromPref != null && fromPref.indexOf(SELF) >= 0) {
+                    apk = fromPref;
+                    emit("cfg", "apk-from-pref ok");
+                } else {
+                    String found = findModuleApk();
+                    emit("cfg", "apk-fallback " + (found == null ? "null" : found));
+                    if (found == null) return m;
+                    apk = found;
+                }
+            }
             if (apk.startsWith("file:")) apk = apk.substring(5);
             java.io.File f = new java.io.File(java.net.URLDecoder.decode(apk, "UTF-8"));
             if (!f.exists()) return m;
@@ -278,9 +313,13 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
     private static boolean isScriptOff(String name) {
         try {
             if (new File(SCRIPTS_DIR, name + ".off").exists()) return true;
-            String on = prefsStr("scriptOn:" + name);
+            // 先直接读模块的 prefs 文件，不依赖模块 App 进程活着。
+            // 只走 provider 的话，模块进程被冻结时 call() 失败，所有开关会静默退回默认值。
+            String on = xspStr("scriptOn:" + name);
+            if (on == null) on = prefsStr("scriptOn:" + name);
             if ("1".equals(on)) return false;
-            String off = prefsStr("scriptOff:" + name);
+            String off = xspStr("scriptOff:" + name);
+            if (off == null) off = prefsStr("scriptOff:" + name);
             if ("1".equals(off)) return true;
         } catch (Throwable t) { }
         // 默认只开那个无害的演示
@@ -291,6 +330,16 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
      * 隐身开关：优先用 XSharedPreferences 直接读模块的 prefs 文件。
      * 走 provider 的话，模块 App 一被回收就返回 false，隐身会静默失效。
      */
+    /** 直接读模块 prefs 里的字符串，读不到返回 null（不刷日志） */
+    private static String xspStr(String key) {
+        try {
+            de.robv.android.xposed.XSharedPreferences xp =
+                    new de.robv.android.xposed.XSharedPreferences(SELF, "xhook");
+            xp.reload();
+            return xp.getString(key, null);
+        } catch (Throwable t) { return null; }
+    }
+
     private static Boolean xspBool(String key) {
         try {
             de.robv.android.xposed.XSharedPreferences xp =
@@ -310,7 +359,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         // 调试日志开关走文件：控制目录里有 debug 这个文件就输出日志。
         // 不走 prefs —— XSharedPreferences 在目标进程读不到（apexdata 路径），provider 也可能失败。
         try {
-            DEBUG_LOG = new File(ROOT + "/debug").exists();
+            DEBUG_LOG = "1".equals(prefsStr("debug"));   // 只认 prefs：文件那套目标进程读不到，会两边不一致
         } catch (Throwable t) { }
         Boolean xv = xspBool("stealth");
         if (xv != null) return xv.booleanValue();
@@ -1130,6 +1179,17 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                                     if (code != null && code.length() > 0) all.put(n, code);
                                 }
                             }
+                            // 先拼一份「所有启用脚本」给 onDraw 重绘用。
+                            // 原来 CURRENT_JS 只有一个槽，9 个脚本轮流覆盖，最后只剩一个，
+                            // 页面一重渲染其他脚本的效果就被冲掉（反色、暗色都是这么丢的）。
+                            StringBuilder allJs = new StringBuilder();
+                            for (java.util.Map.Entry<String, String> e0 : all.entrySet()) {
+                                if (isScriptOff(e0.getKey())) continue;
+                                String c0 = e0.getValue();
+                                if (c0 == null || c0.length() == 0) continue;
+                                allJs.append(c0).append("\n;\n");
+                            }
+                            CURRENT_JS = allJs.length() > 0 ? allJs.toString() : null;
                             for (java.util.Map.Entry<String, String> e : all.entrySet()) {
                                 String n = e.getKey();
                                 String code = e.getValue();
@@ -1219,7 +1279,7 @@ public class HookEntry implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                 nAw++;
             } catch (Throwable t) {}
         }
-        try { CURRENT_JS = js; } catch (Throwable t) { }
+        // 不再在这里覆盖 CURRENT_JS —— 那个槽现在由轮询线程统一维护成「所有启用脚本的拼接」
         emit("inject", "targets std=" + alive.size() + " chromium=" + nAw);
         for (final Object w : alive) {
             try { XposedHelpers.callMethod(w, "post", new Object[]{ new Runnable() { public void run() { try { XposedHelpers.callMethod(w, "evaluateJavascript", new Object[]{ js, null }); } catch (Throwable t) {} } } }); } catch (Throwable t) {}
