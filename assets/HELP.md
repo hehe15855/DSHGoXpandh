@@ -91,8 +91,10 @@ grep local-dshxpandh ~/.dsh/profiles/web/package.json
 **排查顺序**：
 1. 目标 App 在 LSPosed 里被勾选了吗？
 2. 勾选之后**重启过那个 App** 吗？（不是重启手机）
-3. 打开「调试日志」开关，然后 `adb logcat | grep -i dshxpandh` 看有没有 `script-inject` / `aw-eval-ok`（模块日志 TAG 是小写 `dshxpandh`，不加 `-i` 抓不到）
-4. 脚本是不是幂等的？不幂等的脚本重复执行会报错（建议开头写 `if (window.__done) return; window.__done = 1;`）
+3. 打开「调试日志」开关，去「调试日志」卡片点**导出日志** —— 它会直接抓 logcat 写成文件，不用连电脑。
+   想看 `script-inject` / `aw-eval-ok` 这类标记，在导出文件里搜即可。
+4. 脚本是不是幂等的？页面每次重绘都会重跑一遍，不幂等就会重复插入（内置示例的做法是直接 append style，插多次也无害；
+   要防重复就先看一眼元素在不在：`if (document.getElementById("my-style")) return;`）
 
 ---
 

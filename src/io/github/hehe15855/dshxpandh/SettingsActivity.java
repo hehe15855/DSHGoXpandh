@@ -1784,14 +1784,19 @@ public class SettingsActivity extends Activity {
             public void onCheckedChanged(CompoundButton v, boolean checked) { setStealth(checked); }
         });
         rS.addView(swS);
-        cS.addView(body("开启后对目标 App 隐藏这些："));
-        cS.addView(body("· 模块与 Xposed 的类名（查出来是「不存在」）"));
-        cS.addView(body("· XPOSED / LSPOSED / MAGISK 等系统属性与读取痕迹"));
-        cS.addView(body("· 进程映射里带 xposed 标识的短行"));
-        cS.addView(body("· 包列表与精确查询里的 LSPosed 管理器"));
-        cS.addView(body("· 异常栈里露出的 xposed 调用帧"));
-        cS.addView(body("· su / magisk 相关命令探测"));
-        cS.addView(body("仍然挡不住：native 直接读 /proc/self/maps、内核级检测、以及模块 APK 自身的 dex 结构。"));
+        cS.addView(body("开启后遮挡 18 个面、22 处检测点，主进程与子进程都装："));
+        cS.addView(body("· 类名 —— Xposed / LSPosed / libxposed 任何类，加载时一律「不存在」"));
+        cS.addView(body("· 系统属性与环境变量 —— 含 XPOSED / MAGISK 的键返回 null（含只读全表的 getenv()）"));
+        cS.addView(body("· 可疑路径 —— /data/adb/modules、lspd、xposedbridge.jar 等，exists/isFile/listFiles 全说没有"));
+        cS.addView(body("· 包与进程 —— 包列表、进程列表、服务列表、任务列表里都没有模块"));
+        cS.addView(body("· 反射与堆栈 —— $xposed 成员、框架调用帧、xposed 相关注解都被过滤"));
+        cS.addView(body("· 进程启动 —— Runtime.exec 与 ProcessBuilder 都不许跑探测命令"));
+        cS.addView(body("· 文件读取 —— NIO 的 readAllBytes、Os.readlink、File.getCanonicalPath 一并挡"));
+        cS.addView(body("· 调试器 —— isDebuggerConnected / isNativeDebuggerConnected 恒 false"));
+        cS.addView(body("· 身份痕迹 —— 安装来源装作应用商店、签名比对说不匹配、调用来源不暴露"));
+        cS.addView(body("· native 库 —— loadLibrary 加载 frida/xposed 类库时抛 dlopen 失败"));
+        cS.addView(body("挡不住：native 直接读 /proc/self/maps、内核级检测、模块 APK 自身结构。"));
+        cS.addView(body("子进程只装隐身、不装业务 hook —— 检测器常在 :push / :sandbox 里跑，那里同样隐蔽。"));
 
         LinearLayout cBot = card(pr[4], "底层隐藏", "系统里已装的 Zygisk 模块");
         String[][] zm = {

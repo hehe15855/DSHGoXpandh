@@ -1,6 +1,6 @@
 id=io.github.hehe15855.dshxpandh
 name=DSHxpandh
-version=v13.1.0
-versionCode=161
+version=v13.1.5
+versionCode=162
 author=hehe15855
 description=在别的 App 运行的时候动手：改方法返回值、记加解密明文、往网页注入 JS、解浏览器 Cookie。标准 WebView / 腾讯 XWeb / Chromium 三种内核都支持，自带 13 个配方和 9 个脚本。可接入 DSH 拓展把手工配置变成对话，不接也能用。边界：只管 Java 层，native 的 .so 碰不到。

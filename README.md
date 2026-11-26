@@ -96,22 +96,35 @@ Android 上想改一个 App 的行为，常见做法是拆包、改 smali、重�
 
 ## 隐身
 
-默认开启。挡住这些探测面：
+默认开启。**主进程与子进程都装**（`:push` / `:sandbox` / `:downloads` 这些是检测器常驻的地方）。
 
-- **类名与包名** —— `loadClass` 撞到 Xposed / LSPosed / libxposed 的任何类，直接抛 `ClassNotFoundException`
-- **系统属性与环境变量** —— 含 `XPOSED` / `LSPOSED` / `MAGISK` 之类的键返回 `null`
-- **可疑路径** —— `/data/adb/modules`、`/data/adb/lspd`、`xposedbridge.jar` 等，`exists` / `isFile` / `listFiles` 一律说没有
-- **包 / 进程 / 服务列表** —— 模块自己从 `getInstalledPackages`、`getRunningAppProcesses`、`getRunningServices`、`queryIntentActivities` 里消失
-- **堆栈与反射** —— `getStackTrace` 过滤框架帧，`getDeclaredMethods` 过滤 `$xposed` 成员
-- **注解** —— `getAnnotations` / `getDeclaredAnnotations` 去掉 xposed 相关注解
-- **进程启动** —— `Runtime.exec` 和 `ProcessBuilder.start` 都不允许跑指向可疑路径的命令
-- **文件读取** —— NIO 的 `Files.readAllBytes` 读可疑路径直接 `AccessDeniedException`
-- **调试器** —— `isDebuggerConnected` / `waitingForDebugger` 恒返回 false
-- **安装来源** —— 被问模块的 installer 时回 `com.android.vending`（侧载痕迹）
+分 18 个面、共 22 处检测点（下表按面归类；一个面可能挂多处 hook）：
 
-控制目录有开关关掉它（`stealth.off`）——但**诚实的边界**是：只能挡 Java 层探测。
+| 面 | 拦的是什么 |
+|---|---|
+| **类名** | `loadClass` 撞到 Xposed / LSPosed / libxposed 任何类，抛 `ClassNotFoundException` |
+| **系统属性** | `getProperty` / `SystemProperties.get` / `getInt` / `getBoolean` 含框架关键词的键返回空 |
+| **环境变量** | `getenv(key)` 与无参 `getenv()`（返回整表那个）都把框架相关项摘掉 |
+| **可疑路径** | `/data/adb/modules`、`lspd`、`xposedbridge.jar` 等，`exists` / `isFile` / `isDirectory` / `listFiles` 一律说没有 |
+| **包列表** | `getInstalledPackages(AsUser)` / `getInstalledApplications(AsUser)` / `queryIntentActivities` 里没有模块 |
+| **单包查询** | `getPackageInfo` / `getApplicationInfo`（含 `AsUser` 版）抛 `NameNotFoundException` |
+| **进程与服务** | `getRunningAppProcesses` / `getRunningServices` / `getRunningTasks` 过滤掉模块 |
+| **堆栈与反射** | `getStackTrace` / `getAllStackTraces` 去掉框架帧；`getDeclaredMethods` / `getFields` 去掉 `$xposed` 成员 |
+| **注解** | `getAnnotations` / `getDeclaredAnnotations` 摘掉 xposed 相关注解 |
+| **进程启动** | `Runtime.exec` 与 `ProcessBuilder.start` 都不许跑指向可疑路径的命令 |
+| **文件读取** | NIO `Files.readAllBytes` / `Os.readlink` / `File.getCanonicalPath` 一并挡 |
+| **调试器** | `isDebuggerConnected` / `waitingForDebugger` / `isNativeDebuggerConnected` 恒 false |
+| **安装来源** | `getInstallerPackageName` 被问模块时回 `com.android.vending`（遮侧载痕迹） |
+| **签名比对** | `checkSignatures` 涉及模块时返回 `SIGNATURE_NO_MATCH` |
+| **调用来源** | `getCallingPackage` / `getCallingActivity` 不暴露模块 |
+| **native 库** | `ClassLoader.loadLibrary` 加载 frida / xposed / lspd / substrate 时抛 `UnsatisfiedLinkError` |
+| **ApplicationInfo** | `nativeLibraryDir` 含模块痕迹时置空 |
+| **uid 反查** | `getPackagesForUid` 过滤掉模块 |
+
+控制目录放 `stealth.off` 可关掉——但**诚实的边界**是：只能挡 Java 层。
+
 native 侧直接读 `/proc/self/maps`、检查 ART 内存页属性、扫 vaddr 段这些，Java 层看不到也拦不住。
-专门的检测工具（如 Holmes、Rikka 类方案）从 native 走，仍能发现痕迹。
+专门的检测工具（如 Holmes）从 native 走，仍能发现痕迹。要挡那些，得靠 Zygisk 模块或内核层。
 
 ## 安装
 

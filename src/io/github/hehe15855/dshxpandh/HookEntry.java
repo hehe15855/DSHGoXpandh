@@ -38,7 +38,7 @@ public class HookEntry {
     private static final String SELF = "io.github.hehe15855.dshxpandh";
     /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
     private static boolean DEBUG_LOG = false;
-    private static final String VER = "v161";
+    private static final String VER = "v162";
     // 控制目录：统一为 /sdcard/DSHxpandh（单一目录，不做多候选）
     private static final String ROOT = pickRoot();
     private static String pickRoot() {

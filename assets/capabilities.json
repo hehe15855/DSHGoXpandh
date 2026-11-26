@@ -275,7 +275,7 @@
     "改值只影响方法调用，已经编译进底层代码的逻辑改不了。",
     "日志有上限：速度由每个配方的 sample/window_ms 决定（各配方不同，如 cipher-log 每秒 3 次），总量由 max_logs 决定（默认 1000 条）—— 两者都能在配方 json 里改。",
     "关掉通道只停止下发；已经挂上的要重启目标 App 才清得掉。",
-    "模块痕迹藏不掉，专门的检测工具能发现。",
+    "隐身在 Java 层挡住 22 类探测（类名/属性/路径/包列表/进程/堆栈/注解/exec/文件读取/调试器/安装来源等），但 native 直接读 /proc/self/maps、内核级检测仍能看到痕迹。",
     "不提权、不改系统设置，只做进程内的运行时替换。"
   ],
   "ui": {
@@ -504,5 +504,37 @@
       "服务端校验：本地改成什么样，上游不认照样拒"
     ],
     "coversNote": "上面「能」的都是已实现、可直接用的；「不能」的是原理上做不到，不是还没做。"
+  },
+  "stealth": {
+    "enabled": "读取不到配置时默认开启（宁可多隐一层）",
+    "switch": "控制目录 stealth.off 存在即关闭",
+    "scope": "主进程与子进程都装；子进程只装隐身、不装业务 hook",
+    "surfaces": 22,
+    "covers": [
+      "类名（loadClass）",
+      "系统属性（getProperty/SystemProperties）",
+      "环境变量（单个与全表）",
+      "可疑路径（exists/isFile/listFiles）",
+      "包列表（含多用户）",
+      "单包查询（getPackageInfo/getApplicationInfo）",
+      "进程与服务与任务列表",
+      "堆栈与反射成员",
+      "注解",
+      "Runtime.exec 与 ProcessBuilder.start",
+      "NIO readAllBytes / Os.readlink / File.getCanonicalPath",
+      "调试器（Java 与 native）",
+      "安装来源",
+      "签名比对",
+      "调用来源",
+      "loadLibrary 加载 frida/xposed 类库",
+      "ApplicationInfo.nativeLibraryDir",
+      "getPackagesForUid"
+    ],
+    "doesNotCover": [
+      "native 直接读 /proc/self/maps 或 /proc/pid/mem",
+      "ART 内部数据结构检查",
+      "内核级检测（seccomp / kprobe）",
+      "模块 APK 自身的 dex 结构"
+    ]
   }
 }

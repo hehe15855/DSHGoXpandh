@@ -1,22 +1,59 @@
 # 更新日志
-## v13.1.1（2026-11-27）
+## v13.1.5（2026-11-27）
 
-### 增强
+### 增强（隐身）
 
-- **隐身补了 6 类检测面**（原来只挡类名/属性/路径/包列表/堆栈）：
-  - `ProcessBuilder.start` —— 之前只挡 `Runtime.exec`，检测器换个类就能跑 `ps` / `cat /proc/self/maps`
-  - `getAnnotations` / `getDeclaredAnnotations` —— 过滤 xposed 相关注解
-  - `Debug.isDebuggerConnected` / `waitingForDebugger` —— 恒 false
-  - `getRunningAppProcesses` / `getRunningServices` —— 模块进程从列表消失
-  - `getInstallerPackageName` —— 侧载痕迹回 `com.android.vending`
-  - `Files.readAllBytes` —— NIO 直读可疑路径抛 AccessDenied（不是每个人都用 BufferedReader）
+- 隐身从 15 类补到 **18 个面 / 22 处检测点**，主进程与子进程都装：
+  - `ProcessBuilder.start`、`getRunningTasks`、`getPackagesForUid`
+  - `getAnnotations` / `getDeclaredAnnotations`（摘掉 xposed 注解）
+  - `isDebuggerConnected` / `waitingForDebugger` / `isNativeDebuggerConnected`
+  - `getInstalledPackagesAsUser` / `getInstalledApplicationsAsUser` / `getApplicationInfoAsUser`
+  - `getRunningAppProcesses` / `getRunningServices` / `getInstallerPackageName`
+  - `Files.readAllBytes` / `Os.readlink` / `File.getCanonicalPath`
+  - `ClassLoader.loadLibrary`（拦 frida/xposed/lspd/substrate）
+  - `SystemProperties.getInt` / `getBoolean`、无参 `System.getenv()`
+  - `checkSignatures` / `getCallingPackage` / `getCallingActivity`
+  - `ApplicationInfo.nativeLibraryDir`
+- **子进程也装隐身**（原来 `process=main` 会在装隐身之前 return，检测器在 `:push` / `:sandbox` 里跑就等于裸奔）
 
-### 修正
+### 修（关键 bug）
 
-- 详细说明页字号统一 13sp（表格 12sp），与公告/帮助一致
-- `DSH-GUIDE` 里「下发命令写 cmd.json」是错的：实际是 `c-<包名SHA1前8位>.bin` 且要 XOR 混淆，改成用 `dshxpandh_inject`
-- `dshxpandh_script` 描述里「先判 window.__done」不实：内置脚本用的是「重复执行无副作用」，已改口径
-- `capabilities.json` 的「记前后 300 字节」改为「各 200（可调，上限 512）」
+- `prefsStr` 只走 provider，而 hook 早期 `currentApplication()` 是 null → 所有配置读取静默失败。
+  改成三级兜底：**直接解析 prefs xml → getRemotePreferences → provider**。
+  这一条同时修好了「隐身开关读不到」「debug 永远关着」「脚本开关点了没反应」。
+- root 判定统一看 `uid=0`，不再只看退出码（部分 KernelSU 会静默回落到 App 自己的 uid，退出码照样是 0）
+- `emit` 在 `SILENT` 下吞日志，导致子进程隐身装了也看不到。新增 `emitAlways()` 给关键节点用
+
+### 新增（调试日志）
+
+- **导出日志**：一键抓 logcat（走 su）写成 `logcat-<时间>.txt`，含模块日志、注入日志、崩溃栈、状态快照
+- **关闭即清痕迹**：删导出文件 + 清 logcat（`-b all -c`），并核对清前清后行数
+- **立即清痕迹**按钮，结果如实回报（清干净了还是只删了文件）
+
+### 修（脚本开关）
+
+- 双信号判定：`.off` / `.on` 文件（DSH 侧操作）优先于 prefs（设置页操作）
+- 「全部开启 / 关闭」同时处理内置脚本与用户脚本，并同步标记文件
+- 恢复按钮恢复后开关默认全关（示例1 不再自动跑）
+
+### 改（界面与文案）
+
+- 公告页字号统一 13sp，精简为三张卡 + 底部「查看完整说明」入口
+- 详细说明页字号 12→13sp、表格 10→12sp
+- 帮助 / 说明页加 Markdown 渲染，不再显示 `#` `**` 这类源码符号
+- 帮助对话框背景跟随主题（原来浅色系统下白底浅字看不见）
+- 隐身旁白从 6 条扩到完整清单，并说清「子进程也装」「native 挡不住」
+
+### 修正（文档）
+
+- `DSH-GUIDE` 里「下发命令写 cmd.json」是错的（实际是 `c-<包名SHA1前8位>.bin` + XOR 混淆），改成用 `dshxpandh_inject`
+- `dshxpandh_script` 描述里「先判 window.__done」不实，改成「重复执行无副作用」
+- `capabilities.json` 补 `stealth` 字段（18 面 / 22 点 / 覆盖范围 / 挡不住的）；「300 字节」改成「各 200（上限 512）」
+- `module.prop` 描述多行堆叠修复（`sync-texts` 每次叠加一段）
+
+### 仓库
+
+- 提交 `api-libxposed/`（源码 + jar）与 `meta-xposed/`，clone 下来即可编译
 
 ## v13.1.0（2026-11-27）
 
