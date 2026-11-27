@@ -1,8 +1,8 @@
 {
   "module": "DSHxpandh",
-  "version": "13.2.0",
+  "version": "13.3.1",
   "manifestVersion": 1,
-  "summary": "给 App 打 Java 层 hook：抓明文、改参数、改返回值、注网页脚本、读 Cookie、调内部方法。不碰 native、不需要 root。哪些活该交给它、哪些该交给 shell，见 boundary。",
+  "summary": "给 App 打 Java 层 hook，六种活：抓明文、改参数、改返回值、注网页脚本、读 Cookie、调内部方法。整条链路在目标进程里跑，不重启 App 也能改配置；只对 LSPosed 勾选过的 App 生效，不碰 native 的 .so。遇到一个目标先看它在哪一层，Java 层用模块、native 用 shell —— 判断错了会白忙，详见 boundary。",
   "modes": [
     {
       "id": "log",
@@ -325,7 +325,7 @@
       {
         "step": 2,
         "ask": "是不是一个网页里的东西（DOM / fetch / localStorage）？",
-        "yes": "→ 用模块，把 .js 丢进 scripts/",
+        "yes": "→ 用模块，界面「加入脚本」导入 .js",
         "no": "→ 下一步"
       },
       {
@@ -391,7 +391,7 @@
         "moduleDoes": "最省事的一条。hook 了 WebView 构造函数，实例一创建就登记，每 12 秒全量重注入。三种内核都支持。",
         "shellWouldNeed": "能，但要先定位 WebView 实例再注入，成本高得多。",
         "example": "去广告弹窗、改页面样式、拦某个 XHR 改成别的返回。",
-        "action": "把 .js 丢进 /sdcard/DSHxpandh/scripts/，3 秒内自动注入"
+        "action": "界面「加入脚本」导入 .js，3 秒内自动注入；丢进 /sdcard/DSHxpandh/scripts/ 无效"
       },
       {
         "id": "disk-data",

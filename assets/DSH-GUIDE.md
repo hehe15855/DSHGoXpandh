@@ -1,5 +1,15 @@
 # 接入 DSH：把 DSHxpandh 交给助手操作
 
+## 脚本从哪来
+
+只有两条路，都会真正注入到页面：
+
+1. **APK 内置**（`assets/scripts/`）——随包附带，列表里标「内置」。
+2. **界面「加入脚本」导入**——选一个 `.js`，写进模块内部存储，目标进程经 Binder 来取。
+
+`/sdcard/DSHxpandh/scripts/` 这个目录**不参与加载**：往里丢 `.js` 既不会出现在列表，
+也不会被注入。那个目录只存 `.off` / `.on` 开关标记。
+
 > 这一步是**可选**的。DSHxpandh 本身是个独立的 LSPosed 模块——配方（`recipes/*.json`）和脚本（`scripts/*.js`）都是纯文本，手写一样生效，不需要 DSH 在场。
 > 接上 DSH 的好处是把「翻文档、写 JSON、推脚本」变成一句话。
 
@@ -45,8 +55,8 @@ dsh plugin --profile web add /sdcard/DSHxpandh/dsh-plugin
 
 | 文件 | 内容 |
 |---|---|
-| `capabilities.json` | 全部能力：6 种模式、13 个配方、开关、限制 |
-| `recipes/*.json` | 13 个配方各自的 hook 配置（可直接套用）|
+| `capabilities.json` | 全部能力：六种模式、全部配方、开关、限制 |
+| `recipes/*.json` | 每个配方各自的 hook 配置（可直接套用）|
 | `status.json` | 当前版本、通道开关状态、注入总开关 |
 
 ## DSH 能替你做的四件事

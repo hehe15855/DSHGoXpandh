@@ -11,7 +11,7 @@
 
 The usual way to change an app's behaviour on Android is to unpack it, edit smali, re-sign. Slow, and what you install back is a different package.
 
-This module takes another route: hook through LSPosed and act **while the app runs**. Change a method's return value, log plaintext before encryption, inject JS into a page, decrypt browser cookies — configure once, applies on every launch.
+This module takes another route: hook through LSPosed and act **while the app runs**. Log plaintext before encryption, change method arguments, change return values, inject JS into a page, read browser cookies, call internal methods — configure once, applies on every launch.
 
 **It can plug into DSH to turn hand-editing into conversation.** DSH is optional: recipes and scripts are plain text and work on their own; connect it and the assistant reads the capability list, writes recipes, and pushes scripts for you.
 

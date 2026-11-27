@@ -1,1 +1,1 @@
-在别的 App 运行的时候动手：改方法返回值、记加解密明文、往网页注入 JS、解浏览器 Cookie。标准 WebView / 腾讯 XWeb / Chromium 三种内核都支持，自带 13 个配方和 9 个脚本。可接入 DSH 拓展把手工配置变成对话，不接也能用。边界：只管 Java 层，native 的 .so 碰不到。
+别的 App 在跑的时候，从 Java 层动手：抓加解密明文、改方法参数与返回值、往网页注入 JS、读浏览器 Cookie、调内部方法。标准 WebView / 腾讯 XWeb / Chromium 三种内核都支持，配方和脚本随包附带，开箱可用。不碰 native 的 .so，不需要 root，只对 LSPosed 里勾选过的 App 生效。可接 DSH 把手工配置变成对话，不接也能手写配置照常用。

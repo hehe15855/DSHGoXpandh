@@ -948,12 +948,13 @@ public class SettingsActivity extends Activity {
         LinearLayout c1 = card(root, "三步用起来");
         c1.addView(bodyLg("1. LSPosed 里启用本模块，勾选目标 App"));
         c1.addView(bodyLg("2. 重启那个 App（不是重启手机）"));
-        c1.addView(bodyLg("3. 回设置页选配方，或写自定义 hook"));
+        c1.addView(bodyLg("3. 回设置页选配方，或写自定义 hook；要给网页加效果，" + "\n   到「自定义 → 注入脚本」点「加入脚本」选 .js"));
         c1.addView(bodyLg("配置写到 " + CTRL + "/<包名>.json"));
 
         LinearLayout c2 = card(root, "能做六件事", "只管 Java 层");
         c2.addView(bodyLg("抓明文 · 改参数 · 改结果 · 改网页 · 取登录态 · 调内部方法"));
         c2.addView(bodyLg("native 的 .so 逻辑碰不到；改包重签、绕过加固壳也不在能力内。"));
+        c2.addView(bodyLg("脚本从 APK 内置或界面「加入脚本」导入，两边都不需要往 /sdcard 丢文件。"));
 
         LinearLayout cDsh = card(root, "接入 DSH（可选）", "不装也照常手工用");
         cDsh.addView(bodyLg("装了就能用对话配配方、下发脚本，不用自己翻文档。"));
@@ -1538,6 +1539,7 @@ public class SettingsActivity extends Activity {
         cHelp.addView(body("· 注入没生效 → 确认目标 App 在 LSPosed 里被勾选、勾选后重启过它、且调试日志里有 script-inject"));
         cHelp.addView(body("· 隐身开着下发不了 → 无 root 时的设计取舍，不是故障"));
         cHelp.addView(body("· 免 root 环境 → Shizuku 本身跑不了 Xposed，要用 LSPatch / ShizuPosed 这类 patch 框架"));
+        cHelp.addView(body("· 脚本没生效 → 只能从「自定义 → 加入脚本」导入；往 " + CTRL + "/scripts/ 丢 .js 不会生效"));
         Button bHelp = ghost(cHelp, "看完整帮助");
         bHelp.setOnClickListener(new View.OnClickListener() {
             @Override public void onClick(View v) { openHelp(); }
@@ -1729,7 +1731,7 @@ public class SettingsActivity extends Activity {
         cmdBox = new LinearLayout(this);
         cmdBox.setOrientation(LinearLayout.VERTICAL);
         c5.addView(cmdBox);
-        c5.addView(body("目录 " + CMDS + "，丢 .json 进去也会自动出现"));
+        c5.addView(body("cmds/ 里是发过的指令历史，只用来重发，不会自己去执行；要执行请点发送。"));
 
         LinearLayout cSc = card(pr[2], "注入脚本",
                 "常驻：每个启用的脚本在页面加载后都会注入，可单独开关或删除。"
@@ -1785,7 +1787,7 @@ public class SettingsActivity extends Activity {
         scriptBox = new LinearLayout(this);
         scriptBox.setOrientation(LinearLayout.VERTICAL);
         cSc.addView(scriptBox);
-        cSc.addView(body("目录 " + CTRL + "/scripts，丢 .js 进去也会自动出现"));
+        cSc.addView(body("脚本只能从这里「加入脚本」导入。往 " + CTRL + "/scripts/ 丢 .js 不会出现在这里，也不会注入。"));
 
         LinearLayout cS = card(pr[4], "隐身", "反 Java 层探测");
         LinearLayout rS = row(cS);
@@ -1800,7 +1802,7 @@ public class SettingsActivity extends Activity {
             public void onCheckedChanged(CompoundButton v, boolean checked) { setStealth(checked); }
         });
         rS.addView(swS);
-        cS.addView(body("开启后遮挡 18 个面、22 处检测点，主进程与子进程都装："));
+        cS.addView(body("开启后从下面这些面挡住探测，主进程与子进程都装："));
         cS.addView(body("· 类名 —— Xposed / LSPosed / libxposed 任何类，加载时一律「不存在」"));
         cS.addView(body("· 系统属性与环境变量 —— 含 XPOSED / MAGISK 的键返回 null（含只读全表的 getenv()）"));
         cS.addView(body("· 可疑路径 —— /data/adb/modules、lspd、xposedbridge.jar 等，exists/isFile/listFiles 全说没有"));
@@ -2859,36 +2861,13 @@ public class SettingsActivity extends Activity {
     }
 
     /**
-     * 把 scripts 目录里「启用着的」脚本同步进 SharedPreferences。
-     * 目标进程通过 ContentProvider 过来取，不用去 /sdcard 读文件。
-     * 关掉的脚本不传，省带宽也省目标进程的解析。
+     * 以前这里会把 scripts 目录里的 .js 自动同步进 prefs，等于「丢个文件进目录就自动出现、
+     * 自动生效」。用户要求关掉这条路：脚本只能通过界面「加入脚本」手动导入。
+     *
+     * 现在留成空实现，只为不破坏调用点；目录只保留一个作用 —— 存 .off / .on 开关标记。
      */
     void syncScriptsToPrefs() {
-        try {
-            android.content.SharedPreferences p = getSharedPreferences(DshxpandhProvider.PREFS, 0);
-            android.content.SharedPreferences.Editor ed = p.edit();
-            File sd = new File(SCRIPTS);
-            File[] fs = sd.listFiles();
-            // 目录读不到就直接返回。绝不能在这里清 prefs 的 script: 键——
-            // 那会把用户「加入脚本」导入的副本一并吃光（/sdcard 属主是 DSH，模块读不到目录）。
-            if (fs != null) {
-                java.util.Arrays.sort(fs, new java.util.Comparator<File>() {
-                    @Override public int compare(File a, File b) { return a.getName().compareTo(b.getName()); }
-                });
-                int total = 0;
-                for (File f : fs) {
-                    String n = f.getName();
-                    if (!n.endsWith(".js")) continue;
-                    if (new File(sd, n + ".off").exists()) continue;   // 关着的不传
-                    String code = readTextFile(f);
-                    if (code == null || code.length() == 0) continue;
-                    if (total + code.length() > 400000) break;          // Bundle 有上限，防超
-                    total += code.length();
-                    ed.putString("script:" + n, code);
-                }
-            }
-            ed.commit();
-        } catch (Throwable t) { }
+        // 故意什么都不做。
     }
 
     void writeScript(String name, String js) {
@@ -2992,31 +2971,6 @@ public class SettingsActivity extends Activity {
      * force=false（启动时）：什么都不做 —— 内置脚本已经从 APK 直接注入，不需要部署副本。
      * force=true（用户点「恢复内置示例脚本」）：把内置的导到 scripts/ 目录，供手动修改。
      */
-    void releaseSampleScripts(boolean force) {
-        if (!force) return;
-        try {
-            File sd = new File(SCRIPTS);
-            if (!sd.exists()) sd.mkdirs();
-            File[] exist = sd.listFiles();
-            if (!force && exist != null && exist.length > 0) return;   // 已经有脚本，不打扰
-            String[] names = getAssets().list("scripts");
-            if (names == null || names.length == 0) return;
-            for (String n : names) {
-                if (!n.endsWith(".js")) continue;
-                java.io.InputStream is = getAssets().open("scripts/" + n);
-                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
-                byte[] buf = new byte[4096];
-                int k;
-                while ((k = is.read(buf)) > 0) bo.write(buf, 0, k);
-                is.close();
-                FileOutputStream fo = new FileOutputStream(new File(sd, n), false);
-                fo.write(bo.toByteArray());
-                fo.close();
-                new FileOutputStream(new File(sd, n + ".off"), false).close();
-            }
-        } catch (Throwable t) { }
-    }
-
     void setAllScripts(boolean on) {
         // ① 内置脚本：APK assets 里那些
         //    外观类两个互斥（都改整页样式，同时开必然互相覆盖），全开时只留一个
@@ -3049,21 +3003,9 @@ public class SettingsActivity extends Activity {
                 syncScriptMark(nm, on);
             }
         } catch (Throwable t) { }
-        // ③ scripts 目录里的文件（用户自己丢进来的）
-        //    除了写 prefs，还要同步 .off/.on 标记 —— 那两个在 HookEntry.isScriptOff 里优先级最高，
-        //    不清掉的话「全部开启」会被残留的 .off 压回去，表现就是按钮点了没反应。
-        //    （模块 uid 写不进 /sdcard 的 scripts，失败就算了，prefs 仍然生效）
-        try {
-            File[] fs = new File(SCRIPTS).listFiles();
-            if (fs != null) {
-                for (File f : fs) {
-                    String n = f.getName();
-                    if (n == null || !n.endsWith(".js")) continue;
-                    saveScriptPref(n, on);
-                    syncScriptMark(n, on);
-                }
-            }
-        } catch (Throwable t) { }
+        // 不再遍历 /sdcard/DSHxpandh/scripts/：那里的文件不参与加载（见 syncScriptsToPrefs）。
+        // 以前这里会把目录里的 .js 一并写进 prefs —— 等于「点一下全部开启，目录里的文件就全被
+        // 自动导入」，跟「只能手动导入」相违背。一键开关只作用于 prefs 里已有的脚本（②）。
         rebuildScripts();
         toast(on ? "全部脚本已开启" : "全部脚本已关闭");
     }

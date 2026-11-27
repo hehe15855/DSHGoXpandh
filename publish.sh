@@ -9,7 +9,9 @@ cd "$(dirname "$0")"
 
 MAIN_REPO="hehe15855/DSHGoXpandh"
 LSP_REPO="Xposed-Modules-Repo/io.github.hehe15855.dshxpandh"
-DRY=0; BUILD=1
+# DRY 默认取环境变量，没有才是 0 —— 以前写死 DRY=0 会把 DRY=1 bash publish.sh 覆盖掉，
+# 导致「只想预览」却真的建了 Release、传了 APK（2026-11-27 踩过）。
+DRY=${DRY:-0}; BUILD=${BUILD:-1}
 for a in "$@"; do
   [ "$a" = "--dry-run" ] && DRY=1
   [ "$a" = "--no-build" ] && BUILD=0
