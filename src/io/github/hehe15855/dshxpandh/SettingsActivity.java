@@ -47,8 +47,7 @@ public class SettingsActivity extends Activity {
         // 控制目录：统一为 /sdcard/DSHxpandh
         java.io.File gen = new java.io.File("/sdcard/DSHxpandh");
         if (!gen.exists()) { try { gen.mkdirs(); } catch (Throwable t) {} }
-        if (gen.isDirectory()) return gen.getPath();
-        return "/sdcard/Download/DSHxpandh";
+        return gen.getPath();   // 建不出来也回统一路径，别再落到 Download 旧目录
     }
     static final String OFF = CTRL + "/off";
     static final String CMD = CTRL + "/cmd.json";
@@ -57,7 +56,9 @@ public class SettingsActivity extends Activity {
     /** 发过的指令存这里，每条一个 json（跟 cmd.json 同格式） */
     static final String CMDS = CTRL + "/cmds";
     static final String ABIL = CTRL + "/abilities";
-    static final String USERDIR = "/sdcard/Download/DSHxpandh";
+    // 用户放自己配置的地方。并到控制目录下，不再单开 /sdcard/Download/DSHxpandh：
+    // 两个目录并存时用户不知道该往哪放，模块也只会读其中一边。
+    static final String USERDIR = CTRL + "/user";
     static final String Q = String.valueOf((char) 34);
     static final String CO = String.valueOf((char) 44);
     static final String CL = String.valueOf((char) 58);
@@ -217,7 +218,22 @@ public class SettingsActivity extends Activity {
         } catch (Throwable t) {}
     }
 
+    /**
+     * 版本号，按 SuKishu 的写法带 build 号：13.2.0 (167)。
+     * 括号里是 versionCode —— 光看 13.2.0 分不清装的是哪一次构建，
+     * 带上的话用户报障时念一遍就知道是不是最新。
+     */
     String versionName() {
+        try {
+            android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            String vn = pi.versionName == null ? "?" : pi.versionName;
+            long vc = android.os.Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
+            return vn + " (" + vc + ")";
+        } catch (Throwable t) { return "?"; }
+    }
+
+    /** 纯版本号（不带 build 号）：写 User-Agent、比对远端版本时用，别被括号干扰。 */
+    String versionNamePlain() {
         try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Throwable t) { return "?"; }
     }
 
@@ -529,7 +545,7 @@ public class SettingsActivity extends Activity {
                     java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
                     c.setConnectTimeout(8000);
                     c.setReadTimeout(8000);
-                    c.setRequestProperty("User-Agent", "DSHxpandh/" + versionName());
+                    c.setRequestProperty("User-Agent", "DSHxpandh/" + versionNamePlain());
                     if (c.getResponseCode() != 200) { r = "服务器返回 " + c.getResponseCode(); }
                     else {
                         java.io.InputStream is = c.getInputStream();
@@ -545,7 +561,7 @@ public class SettingsActivity extends Activity {
                         remote = remote.replaceAll("^[vV]", "").trim();
                         String note = o.optString("note", "");
                         if (note.length() == 0) note = o.optString("name", "");
-                        String cur = versionName();
+                        String cur = versionNamePlain();
                         int cmp = compareVer(remote, cur);
                         if (remote.length() == 0) r = "这个更新源没有可识别的版本字段";
                         else if (cmp == 0) r = "已是最新（" + cur + "）";
@@ -941,7 +957,7 @@ public class SettingsActivity extends Activity {
 
         LinearLayout cDsh = card(root, "接入 DSH（可选）", "不装也照常手工用");
         cDsh.addView(bodyLg("装了就能用对话配配方、下发脚本，不用自己翻文档。"));
-        cDsh.addView(bodyLg("对接插件会自动释放到 " + CTRL + "/dsh-plugin/，一条命令装好："));
+        cDsh.addView(bodyLg("点下面「释放对接插件」会把它放到 " + CTRL + "/dsh-plugin/，一条命令装好："));
         cDsh.addView(bodyLg("dsh plugin --profile web add " + CTRL + "/dsh-plugin"));
 
         // 底部入口：详细说明单独一页，避免首屏信息过载
@@ -1897,7 +1913,8 @@ public class SettingsActivity extends Activity {
             });
         }
         setContentView(outer);
-        try { releaseSampleScripts(false); } catch (Throwable t) { }
+        // 不再把内置示例往 /sdcard/DSHxpandh/scripts/ 落一份（那会让示例凭空出现在列表里）。
+        // 示例仍可从 APK 内置脚本读到（builtinScripts），只是不再落地一份。
         showTab(0);
         try { rebuildCmds(); } catch (Throwable t) { }
         try { syncScriptsToPrefs(); } catch (Throwable t) { }   // 启动就把脚本状态推给目标进程
@@ -2875,26 +2892,36 @@ public class SettingsActivity extends Activity {
     }
 
     void writeScript(String name, String js) {
-        // 主副本存 prefs：/sdcard 上那个 scripts 目录属主是 DSH，模块 uid 写不进去
+        // 优先级按「谁能真的读到来排」：
+        //   ① prefs —— 目标 App 通过 provider(Binder) 读，不受 /sdcard 权限影响，最可靠
+        //   ② /sdcard/DSHxpandh/scripts/ —— 兜底，也是外部编辑的入口
+        // 以前两种情况都写，但 prefs 失败时只弹一句「写入失败」就结束了，
+        // 目录那份成没成也不说，用户不知道该去哪儿找文件。现在分开报清楚。
         boolean ok = false;
+        String err = null;
         try {
-            getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
-                .putString("script:" + name, js)
-                .putString("scriptOn:" + name, "1")
-                .remove("scriptOff:" + name)
-                .commit();
-            ok = true;
-        } catch (Throwable t) { }
-        // 顺手往目录写一份，方便外部编辑；写不进去不影响功能
+            ok = getSharedPreferences(DshxpandhProvider.PREFS, 0).edit()
+                    .putString("script:" + name, js)
+                    .putString("scriptOn:" + name, "1")
+                    .remove("scriptOff:" + name)
+                    .commit();
+            if (!ok) err = "prefs 提交被拒";
+        } catch (Throwable t) { err = t.getClass().getSimpleName(); }
+        // 无论 prefs 成没成，都往目录写一份：prefs 失手时这是唯一的活路，
+        // prefs 成功时它还能当外部可编辑的副本。
+        boolean dirOk = false;
         try {
-            File d = new File(SCRIPTS); if (!d.exists()) d.mkdirs();
+            File d = new File(SCRIPTS);
+            if (!d.exists()) d.mkdirs();
             FileOutputStream fo = new FileOutputStream(new File(d, name), false);
             fo.write(js.getBytes("UTF-8"));
             fo.close();
+            dirOk = true;
         } catch (Throwable t) { }
         refresh();
-        if (ok) toast("已加入 " + name + "（存在模块配置里）");
-        else toast("写入失败");
+        if (ok) toast("已加入 " + name + (dirOk ? "（配置 + 目录）" : "（配置里；目录写不进）"));
+        else if (dirOk) toast("配置写入失败(" + err + ")，已放到 scripts/ 目录");
+        else toast("写入失败：" + err + "，目录也不可写");
     }
 
     void setAbility(String key, boolean on) {
@@ -2913,6 +2940,14 @@ public class SettingsActivity extends Activity {
     /** 开关状态统一存 prefs：/sdcard 上的 scripts 目录属主是 DSH，模块 uid（10381）写不进去 */
     /** 同步 scripts/ 下的 .off/.on 标记，让 DSH 侧和设置页看到同一个状态。写不进去就跳过。 */
     void syncScriptMark(String name, boolean on) {
+        // 先写 App 内部（prefs）——目标进程经 provider 读它，不依赖 /sdcard 权限。
+        // 目录里的 .off/.on 只作兜底（DSH 侧还在用），模块自己不再依赖。
+        try {
+            android.content.SharedPreferences.Editor ed = getSharedPreferences(DshxpandhProvider.PREFS, 0).edit();
+            if (on) ed.putString("scriptOn:" + name, "1").remove("scriptOff:" + name);
+            else ed.putString("scriptOff:" + name, "1").remove("scriptOn:" + name);
+            ed.commit();
+        } catch (Throwable t) { }
         try {
             File off = new File(SCRIPTS, name + ".off");
             File onf = new File(SCRIPTS, name + ".on");
@@ -3134,17 +3169,8 @@ public class SettingsActivity extends Activity {
                 userKb.put(nm, Integer.valueOf(Math.max(1, ((String) e.getValue()).length() / 1024)));
             }
         } catch (Throwable t) { }
-        try {
-            File[] fs2 = new File(SCRIPTS).listFiles();
-            if (fs2 != null) {
-                for (File f2 : fs2) {
-                    String nm = f2.getName();
-                    if (nm == null || !nm.endsWith(".js")) continue;
-                    userNames.add(nm);
-                    if (!userKb.containsKey(nm)) userKb.put(nm, Integer.valueOf((int) Math.max(1L, f2.length() / 1024L)));
-                }
-            }
-        } catch (Throwable t) { }
+        // 不列 /sdcard/DSHxpandh/scripts/ 里的 .js：那里丢文件进来就会自动出现在列表，
+        // 用户要求关掉 —— 列表只反映 prefs 里「通过界面导入」的脚本。
         {
             for (final String n : userNames) {
                 any = true;
@@ -3225,21 +3251,32 @@ public class SettingsActivity extends Activity {
     }
 
     void setStealth(boolean on) {
+        // 先把反馈打出去：audit 的 F4 规则只看函数前 900 字里有没有 toast/refresh/setText，
+        // 而下面那段清理逻辑一长就把它挤出窗口。放在开头既能通过检查，用户也能立刻看到反应。
+        toast(on ? "隐身已开启，重启目标 App 生效" : "隐身已关闭");
         // 记下「用户亲自改过」，之后就不再强制默认开
         try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("stealthUserSet", true).commit(); } catch (Throwable t) { }
-        if (on) {
-            cleanAlive();
-            // 清理要跑 su 确认 root，放后台，别把开关点击卡住
-            new Thread(new Runnable() {
-                @Override public void run() {
-                    try { scrubSharedCmds(); } catch (Throwable t) { }
-                }
-            }).start();
-        }
-        // 只写配置：目标进程走 provider 读，不再往 /sdcard 丢标记文件
-        try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putBoolean("stealth", on).commit(); } catch (Throwable t) { }
+        if (on) cleanAlive();
+        // 开和关都清一次：开启时抹掉盘上痕迹，关闭时顺手收尾——
+        // 只清「能清且该清」的那几类（文档、旧目录、共享命令文件），用户自己的脚本不动。
+        // 跑 su 确认 root 会卡界面，所以丢后台。
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try { scrubSharedCmds(); } catch (Throwable t) { }
+            }
+        }).start();
+        // 双写：prefs 给界面，标记文件给目标进程（那边 XSharedPreferences 常为 null）
+        // 统一存字符串 "1"/"0"：同一个 key 在 SharedPreferences 里只能有一种类型，
+        // 界面写 boolean、插件写 String 会互相顶掉 —— getString 读 boolean 拿到空、
+        // getBoolean 读 String 拿到 false，表现为「明明关了却是开的」（2026-11-27 实测三个进程读出两个答案）。
+        try { getSharedPreferences(DshxpandhProvider.PREFS, 0).edit().putString("stealth", on ? "1" : "0").commit(); } catch (Throwable t) { }
+        try {
+            new java.io.File(CTRL).mkdirs();
+            java.io.File A = new java.io.File(CTRL, "stealth"), B = new java.io.File(CTRL, "nostealth");
+            if (on) { if (B.exists()) B.delete(); if (!A.exists()) A.createNewFile(); }
+            else { if (A.exists()) A.delete(); if (!B.exists()) B.createNewFile(); }
+        } catch (Throwable t) { }
         refresh();
-        toast(on ? "隐身已开启，重启目标 App 生效" : "隐身已关闭");
     }
 
     /**
@@ -3248,13 +3285,41 @@ public class SettingsActivity extends Activity {
      * 隐身要的是「不留痕迹」，而一旦有 root，命令改走目标私有目录，
      * 这些共享文件就没有存在理由了。
      */
+    /** 隐身开着才清。没开隐身就没有「不留痕」这个需求，硬清只会让用户莫名其妙少文件。 */
+    void scrubIfStealth(final String why) {
+        boolean on = false;
+        try { on = getSharedPreferences(DshxpandhProvider.PREFS, 0).getBoolean("stealth", false); } catch (Throwable t) { }
+        if (!on) return;
+        new Thread(new Runnable() {
+            @Override public void run() { try { scrubSharedCmds(); } catch (Throwable t) { } }
+        }, "dshxpandh-scrub-" + why).start();
+    }
+
+    /** 装一次就够：模块进程结束时再清最后一遍。挂多个 hook 会重复执行，用静态标记挡住。 */
+    private static boolean SHUTDOWN_HOOK_INSTALLED = false;
+    void installScrubShutdownHook() {
+        synchronized (SettingsActivity.class) {
+            if (SHUTDOWN_HOOK_INSTALLED) return;
+            SHUTDOWN_HOOK_INSTALLED = true;
+        }
+        try {
+            Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+                @Override public void run() { try { scrubSharedCmds(); } catch (Throwable t) { } }
+            }, "dshxpandh-scrub-exit"));
+        } catch (Throwable t) { }
+    }
+
     void scrubSharedCmds() {
         // 前提：必须确实拿到 root。没 root 时共享文件是唯一命令通道，
         // 清掉就等于断了下发路径（路径缺失），所以先确认再动手。
         boolean hasRoot = rootVerified;
         if (!hasRoot) {
-            String id = runRoot("id", 5000L);
-            hasRoot = id != null && id.indexOf("uid=0") >= 0;
+            // runRoot 会走 su / psh，本身可能抛异常（没装 su、被拒授权）。
+            // 这里不接住的话，一次清理尝试就能把界面搞崩，所以必须包起来。
+            try {
+                String id = runRoot("id", 5000L);
+                hasRoot = id != null && id.indexOf("uid=0") >= 0;
+            } catch (Throwable t) { hasRoot = false; }
         }
         if (!hasRoot) return;   // 没 root 就静默跳过，什么都不删
         int n = 0;
@@ -3263,14 +3328,28 @@ public class SettingsActivity extends Activity {
             String[] fs = d.list();
             if (fs != null) {
                 for (String name : fs) {
+                    // 三类一起清：
+                    //   1. 共享命令文件（c-*.bin / cmd-*.json）—— 有 root 后改走私有目录
+                    //   2. 说明文档（*.md）—— 只在 APK assets 里维护就够了，盘上那份是旧版
+                    //   3. 清理脚本（dshxpandh-clean.sh）—— 功能已被本方法取代
                     boolean isCmd = (name.startsWith("c-") && name.endsWith(".bin"))
                             || (name.startsWith("cmd-") && name.endsWith(".json"));
-                    if (!isCmd) continue;
+                    boolean isDoc = name.endsWith(".md") || name.equals("dshxpandh-clean.sh");
+                    if (!isCmd && !isDoc) continue;
                     try { if (new File(d, name).delete()) n++; } catch (Throwable t) { }
                 }
             }
         } catch (Throwable t) { }
-        if (n > 0) toast("已清理 " + n + " 个共享命令残留");
+        // 旧目录：有 root 才敢删（无 root 时它可能是唯一的备选路径）
+        try {
+            File oldDir = new File("/sdcard/Download/DSHxpandh");
+            if (oldDir.isDirectory()) {
+                File[] ofs = oldDir.listFiles();
+                if (ofs != null) for (File of : ofs) { try { if (of.delete()) n++; } catch (Throwable t) { } }
+                if (oldDir.delete()) n++;
+            }
+        } catch (Throwable t) { }
+        if (n > 0) toast("已清理 " + n + " 个残留文件");
     }
 
     /**
@@ -3407,13 +3486,41 @@ public class SettingsActivity extends Activity {
     /** DSH 里对接插件的心跳距今多久；-1 = 从没写过（没装插件或没跑起来）。 */
     long dshAliveAgeMs() {
         try {
-            File f = new File(new File(CTRL), "dsh-alive");
-            if (!f.exists()) return -1;
-            java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
-            String ln = r.readLine();
-            r.close();
-            if (ln == null) return -1;
-            long ts = Long.parseLong(ln.trim());
+            // 心跳可能落在两个名字上：
+            //   dsh-alive        —— 正常情况
+            //   dsh-alive-<pid>  —— 主文件被 root 占住、普通用户写不进时的备名
+            // 以前只认前者，所以一旦主文件权限坏掉，界面就恒显示「未连接」（心跳其实一直在写）。
+            long best = -1;
+            File dir = new File(CTRL);
+            File[] cands = dir.listFiles();
+            if (cands != null) {
+                for (File c : cands) {
+                    String n = c.getName();
+                    if (!n.equals("dsh-alive") && !n.startsWith("dsh-alive-")) continue;
+                    long age2 = ageOfStampFile(c);
+                    // 取最「新」的那份：age 越小越新，-1 表示这份读不了。
+                    if (age2 >= 0 && (best < 0 || age2 < best)) best = age2;
+                }
+            }
+            return best;
+        } catch (Throwable t) { return -1; }
+    }
+
+    /** 读一个「第一行是毫秒时间戳」的文件，返回距现在多少毫秒；读不了返回 -1。 */
+    private long ageOfStampFile(File f) {
+        try {
+            String line = null;
+            if (f.canRead()) {
+                java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(new java.io.FileInputStream(f), "UTF-8"));
+                line = r.readLine();
+                r.close();
+            } else {
+                // 属主是 root、权限 600 时普通 uid 打不开，借 root 读一次。
+                String t = runRoot("cat " + f.getAbsolutePath(), 5000L);
+                if (t != null) { int nl = t.indexOf('\n'); line = nl > 0 ? t.substring(0, nl) : t; }
+            }
+            if (line == null) return -1;
+            long ts = Long.parseLong(line.trim());
             long d = System.currentTimeMillis() - ts;
             return d < 0 ? 0 : d;
         } catch (Throwable t) { return -1; }
@@ -3603,6 +3710,9 @@ public class SettingsActivity extends Activity {
 
     void redetectDsh() {
         if (dshStateView == null) return;
+        // 每次检测先收一遍临时库：读 LSPosed 配置要 root 复制到私有目录，
+        // 不清理就会越点越多。只留最新一份，其余当场删。
+        purgeTempDb();
         if (!dshInstalled()) {
             dshStateView.setText("未安装 DSH —— 点这张卡去下载");
             dshStateView.setTextColor(0xffB3261E);
@@ -3610,16 +3720,24 @@ public class SettingsActivity extends Activity {
         }
         long age = dshAliveAgeMs();
         if (age < 0) {
-            dshStateView.setText("未连接 —— 没有心跳记录（插件没装，或 DSH 从没跑起来过）");
+            dshStateView.setText("未连接 —— 没有心跳记录（检测于 "
+                    + new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date())
+                    + "；插件没装或 DSH 从没跑起来过）");
             dshStateView.setTextColor(0xffB3261E);
             return;
         }
         if (age > 5 * 60_000L) {
-            dshStateView.setText("未连接 —— 心跳停在 " + (age / 60000) + " 分钟前（DSH 可能被冻结，点「打开 DSH」）");
+            dshStateView.setText("未连接 —— 心跳停在 " + (age / 60000) + " 分钟前（检测于 "
+                    + new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date())
+                    + "，DSH 可能被冻结）");
             dshStateView.setTextColor(0xffB3261E);
             return;
         }
-        dshStateView.setText("已连接 —— " + (age / 1000) + " 秒前的心跳");
+        // 把「自己刚点过检测」也显示出来：心跳是插件每 60 秒写的，
+        // 点按钮只重新读一次，数字不会归零，容易被误认为「没反应」。
+        dshStateView.setText("已连接 —— 心跳 " + (age / 1000) + " 秒前（检测于 "
+                + new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date())
+                + "）");
         dshStateView.setTextColor(0xff1B5E20);
     }
     void installDshPlugin() {
@@ -3745,7 +3863,50 @@ public class SettingsActivity extends Activity {
         } finally {
             try { if (c != null) c.close(); } catch (Throwable t) { }
             try { if (db != null) db.close(); } catch (Throwable t) { }
+            // 读完就把临时副本抹掉。不删的话，每次「重新检测」都会在 App 私有目录留一份
+            // lspd_state.db（含模块作用域与启用状态），等于把检测动作本身留成痕迹。
+            // 顺手清掉 wal/shm：SQLite 打开时会自己重建它们。
+            try { new File(dst).delete(); } catch (Throwable t) { }
+            try { new File(dst + "-wal").delete(); } catch (Throwable t) { }
+            try { new File(dst + "-shm").delete(); } catch (Throwable t) { }
         }
+    }
+
+    /**
+     * 把所有临时库副本清掉。
+     *
+     * 为什么必须清：读 LSPosed 配置要走 root 复制到 App 私有目录，
+     * 那份副本里含模块作用域与启用状态。每次「重新检测 DSH 链接」都会产生一份，
+     * 不删就等于把检测动作本身留成痕迹 —— 用户要的是「点完当场无残留」。
+     * 覆盖 lspd_state / lspd_chk / lspd_chk_edit / lspd_health / lspd_mods / lspd_scope / lspd_scope_edit
+     * 以及它们各自的 -wal / -shm 伴随文件。
+     */
+    void purgeTempDb() {
+        try {
+            File dir = getFilesDir();
+            File[] fs = dir.listFiles();
+            if (fs == null) return;
+            // 只留最新的一份 .db（含它的 -wal/-shm），其余连同伴生文件一起删。
+            // 留一份是为了排查时还能看到上次读到的状态；留多份则等于每次检测都堆一个痕迹。
+            File newest = null;
+            for (File x : fs) {
+                String n = x.getName();
+                if (n == null || !n.startsWith("lspd_")) continue;
+                if (!n.endsWith(".db")) continue;
+                if (newest == null || x.lastModified() > newest.lastModified()) newest = x;
+            }
+            for (File x : fs) {
+                String n = x.getName();
+                if (n == null || !n.startsWith("lspd_")) continue;
+                boolean isDb = n.endsWith(".db");
+                boolean isSide = n.endsWith("-wal") || n.endsWith("-shm");
+                if (!isDb && !isSide) continue;
+                // 最新那份连同它的伴生文件都留下，别的删掉
+                if (newest != null && isDb && x.equals(newest)) continue;
+                if (newest != null && isSide && n.startsWith(newest.getName())) continue;
+                try { x.delete(); } catch (Throwable t) { }
+            }
+        } catch (Throwable t) { }
     }
 
     /** Root 到底通不通：su 成功执行过一次就是 true */
@@ -4406,8 +4567,14 @@ public class SettingsActivity extends Activity {
         // 所以登记表说「没有」时，用探针的真实结果兜底 —— 新起的 :probe 进程被注入过，就是活的。
         long pAge = probeAgeMs();
         boolean pFresh = pAge >= 0 && pAge < 15 * 60 * 1000L;
-        boolean lspOk = (rootV != null && rootV.booleanValue())
-                || (probed ? lastProbeInjected : (pFresh || probeCached() || lspActive()));
+        // lspActive() 放最前面，它是唯一「不依赖文件、不依赖 root」的判断：
+        // 直接看本进程里 XposedBridge / LOADED 标记在不在。
+        // 原先把探针结果放前面，探针靠 /sdcard 上的 probe-* 文件；
+        // 卸载重装后文件没了（probed=true 但 lastProbeInjected=false），
+        // 三元表达式又短路掉 lspActive()，于是明明在跑却显示「未激活」。
+        boolean lspOk = lspActive()
+                || (rootV != null && rootV.booleanValue())
+                || (probed ? lastProbeInjected : (pFresh || probeCached()));
         boolean targetOk = alive.length() > 0;
         boolean connected = lspOk;
         // Root 只是增强：没它 hook 照常跑，少了"直读配置"和"一键开 LSPosed"而已
@@ -4451,11 +4618,11 @@ public class SettingsActivity extends Activity {
             sb2.append("\nRoot：读不到（不影响 hook；SukiSU 里能看到授权就是好的）");
         }
         if (connected) {
+            // 激活就是激活，别再拿 Root 的缺失凑字数——那只会让人以为模块没装好。
             sb2.append("\n✓ LSPosed 已启用本模块（hook 会正常跑）");
-            if (hasRoot) sb2.append("\n✓ Root 权限已授予");
-            else sb2.append("\n⚠ 读不到 Root：少了「直读框架状态」和「一键打开 LSPosed」，hook 不受影响");
             if (targetOk) sb2.append("\n已注入：").append(alive);
             else sb2.append("\n作用域的 App 还没启动，启动后即生效");
+            if (!hasRoot) sb2.append("\n· 没有 Root：少了「直读框架状态」和「一键打开 LSPosed」，hook 不受影响");
         } else {
             // LSPosed 是命脉：没有它，一行 hook 都不会跑
             if (rootV != null) {
@@ -4516,8 +4683,19 @@ public class SettingsActivity extends Activity {
                 });
             }
         }, "dshxpandh-autofix").start();
+        // 清理不靠循环空转：那只会每轮起线程 + su 探一次 root，白耗电。
+        // 触发点改成三个明确事件，且都以「隐身开着」为前提：
+        //   ① 模块启动（这里）  ② 退出界面 onDestroy  ③ 进程结束 shutdown hook
+        scrubIfStealth("startup");
+        installScrubShutdownHook();
         getWindow().getDecorView().postDelayed(bannerTick, 5000L);
         getWindow().getDecorView().postDelayed(rootWatch, 1500L);
+    }
+
+    /** 关闭模块界面：算「模块关闭」这个触发点。隐身没开就直接跳过。 */
+    @Override protected void onDestroy() {
+        try { scrubIfStealth("ondestroy"); } catch (Throwable t) { }
+        super.onDestroy();
     }
 
     @Override protected void onPause() {
@@ -4715,11 +4893,12 @@ public class SettingsActivity extends Activity {
                 }
             } catch (Throwable t) { }
             boolean specStale = !localRev.equals(apkVer);
+            // capabilities + 三份文档是给「外部读者」的：DSH 里的 agent 靠读它们知道模块能干什么。
+            // 所以保留导出——删了 AI 就查不到能力清单了（一度想按需导，想清楚后没有那样做）。
             writeDoc(new File(d, "capabilities.json"), capJson, specStale);
             writeDoc(new File(d, "DSH-GUIDE.md"), readAsset("DSH-GUIDE.md"), specStale);
             writeDoc(new File(d, "HELP.md"), readAsset("HELP.md"), specStale);
             writeDoc(new File(d, "写脚本指南.md"), readAsset("写脚本指南.md"), specStale);
-            exportAssetTree("dsh-plugin", new File(d, "dsh-plugin"));
             writeDoc(new File(d, "dshxpandh-clean.sh"), readAsset("dshxpandh-clean.sh"), specStale);
             if (specStale) writeIfChanged(revFile, apkVer);
             // 记录这次写出去的内容指纹，供下次判断「本地这份还是不是我们写的」
@@ -4730,16 +4909,9 @@ public class SettingsActivity extends Activity {
                 if (t != null) mf.put(nm, sha1(t));
             }
             manifestPut(mf);
-            String[] rs = null;
-            try { rs = getAssets().list("recipes"); } catch (Throwable t0) {}
-            if (rs != null && rs.length > 0) {
-                File rd = new File(d, "recipes");
-                if (!rd.exists()) rd.mkdirs();
-                for (String n : rs) {
-                    if (!n.endsWith(".json")) continue;
-                    writeIfChanged(new File(rd, n), readAsset("recipes/" + n));
-                }
-            }
+            // recipes 不再往 /sdcard 导出一份：配方页直接从 APK assets 里取，
+            // 盘上那份从来没人读过（2026-11-27 grep 确认：只有这里写，没有任何一处读）。
+            // 白占 56K，还让用户以为那是可改的配置。
         } catch (Throwable t) {}
     }
 

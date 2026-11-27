@@ -144,6 +144,67 @@ for (const [t, n] of seen) if (n > 1) warns.push('D1 文案重复 x' + n + ': ' 
 // D2 assets 插件与本地是否同步
 if (assetJs && liveJs && assetJs !== liveJs) errs.push('D2 assets/dsh-plugin 与本地插件不同步')
 
+// D6 插件三处副本必须一致：源码 / APK assets / 分发目录
+// 为什么单独查：D2 只比了源码和 assets，而 /sdcard/DSHxpandh/dsh-plugin/ 是给别人装的，
+// 漏掉它就会出现「本机好的、别人装的是旧版」（2026-11-27 实测差 2048 字节）。
+// 不止 index.js：APK 里打进去的是三个文件，任何一个不同步都是「别人装到旧版」。
+// package.json 决定插件元信息，cordis.patch.yml 决定注入点，漏了哪个都会出怪问题。
+for (const rel of ['lib/index.js', 'package.json', 'cordis.patch.yml']) {
+  try {
+    const dist = fs.readFileSync('/sdcard/DSHxpandh/dsh-plugin/' + rel, 'utf8')
+    const src = fs.readFileSync('/root/.dsh/dsh-go/plugins/local-dshxpandh/' + rel, 'utf8')
+    if (dist !== src) errs.push('D6 分发副本不同步: ' + rel)
+  } catch (e) { /* 分发目录没释放过就不算错 */ }
+}
+
+// D7 隐身+root 的清理行为必须在描述里说清
+// 不说清的话，用户看到共享文件被删会当成故障（工具描述承诺「没 root 写共享文件」，
+// 而拿到 root 后那些文件会被清掉，两句话看着是矛盾的）。
+if (liveJs && has(liveJs, 'maybeScrub') && has(liveJs, "ROOT + '/stealth'")) {
+  if (!has(liveJs, '共享文件会被自动清掉') && !has(liveJs, '残留会被自动清理')) {
+    warns.push('D7 插件会清共享文件，但工具描述没提，用户会当成故障')
+  }
+}
+
+// D8 插件调用的 provider 方法必须在模块侧真的实现
+// 以前靠人记，现在机器对：插件写 getStr、模块只认 getString 这类 mismatch 会当场红。
+try {
+  const prov = fs.readFileSync(D + '/src/io/github/hehe15855/dshxpandh/DshxpandhProvider.java', 'utf8')
+  const implemented = new Set()
+  const mRe = /"([a-zA-Z]+)"\.equals\(method\)/g
+  let mm
+  while ((mm = mRe.exec(prov))) implemented.add(mm[1])
+  const calledRe = /--method ([a-zA-Z]+)/g
+  let cm
+  const used = new Set()
+  while ((cm = calledRe.exec(liveJs || ''))) used.add(cm[1])
+  for (const c of used) if (!implemented.has(c)) errs.push('D8 插件调用了 provider 未实现的方法: ' + c)
+} catch (e) { }
+
+// D9 capabilities.json 的版本必须跟 Manifest 一致
+// 它的 version 是手写的，升级时最容易漏——漏了就是「能力清单说 13.1.0、装的是 13.1.7」。
+try {
+  const capRaw = fs.readFileSync(D + '/assets/capabilities.json', 'utf8')
+  const capVer = (JSON.parse(capRaw).version) || ''
+  if (capVer && capVer !== vn) errs.push('D9 capabilities.json 版本滞后: ' + capVer + ' vs ' + vn)
+} catch (e) { }
+
+// D10 文档里不许把已废弃的 Download 目录当可用路径写
+// 允许出现「已废弃」的说明句，但不许在操作步骤里让人往那儿拷东西。
+for (const doc of ['DSH-GUIDE.md', 'HELP.md', 'README.md', '写脚本指南.md']) {
+  try {
+    const t = fs.readFileSync(D + '/assets/' + doc, 'utf8')
+    const lines = t.split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      const ln = lines[i]
+      if (!has(ln, 'Download/DSHxpandh')) continue
+      if (has(ln, '废弃') || has(ln, '已删')) continue
+      errs.push('D10 ' + doc + ':' + (i + 1) + ' 把废弃目录当可用路径')
+      break
+    }
+  } catch (e) { }
+}
+
 // D3 残留调试输出
 for (const f of ['J', 'H', 'P']) {
   const s = f === 'J' ? J : f === 'H' ? H : P
@@ -224,10 +285,12 @@ for (const fn of ['scrubSharedCmds', 'cleanAlive']) {
 }
 
 // F4 写操作后必须刷新界面状态
+// 窗口 2400 字：原来 900 太窄，函数里写清「为什么这么改」的注释一多，
+// 末尾的 toast 就被挤出窗口、报出假警报（2026-11-27 实测 toast 落在 1386 字处）。
 for (const fn of ['installDshPlugin', 'setStealth']) {
   const i = J.indexOf('void ' + fn)
   if (i < 0) continue
-  const seg = J.slice(i, i + 900)
+  const seg = J.slice(i, i + 2400)
   if (!has(seg, 'toast') && !has(seg, 'refresh') && !has(seg, 'setText')) warns.push('F4 ' + fn + ' 写操作后没有可见反馈')
 }
 

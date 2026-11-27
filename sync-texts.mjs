@@ -17,7 +17,8 @@ try { desc = fs.readFileSync(D + '/texts/description.txt', 'utf8').trim() } catc
 const p = D + '/module.prop'
 let t = fs.readFileSync(p, 'utf8')
 const before = t
-t = t.replace(/^version=.*$/m, 'version=v' + vn)
+// 带 build 号，跟界面显示一致：v13.2.0 (167)。只写 13.2.0 分不清是哪次构建。
+t = t.replace(/^version=.*$/m, 'version=v' + vn + ' (' + vc + ')')
 t = t.replace(/^versionCode=.*$/m, 'versionCode=' + vc)
 
 // description 可能是多行（texts/description.txt 里有空行分段）。

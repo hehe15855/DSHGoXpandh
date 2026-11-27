@@ -1,6 +1,6 @@
 {
   "module": "DSHxpandh",
-  "version": "13.1.0",
+  "version": "13.2.0",
   "manifestVersion": 1,
   "summary": "给 App 打 Java 层 hook：抓明文、改参数、改返回值、注网页脚本、读 Cookie、调内部方法。不碰 native、不需要 root。哪些活该交给它、哪些该交给 shell，见 boundary。",
   "modes": [
@@ -231,13 +231,30 @@
   ],
   "switches": [
     {
-      "file": "off",
-      "when": "存在即停 JS 注入与命令下发",
+      "source": "App 内部（prefs）",
+      "key": "stealth",
+      "when": "布尔值；目标进程经 provider 读取，不依赖 /sdcard 权限",
       "hot": true
     },
     {
-      "file": "stealth",
-      "when": "存在即对目标进程隐藏 Xposed 特征",
+      "fallback": "stealth / nostealth 文件",
+      "when": "目标进程拿不到 prefs 时兜底；存在即对应状态",
+      "hot": true
+    },
+    {
+      "source": "App 内部（prefs）",
+      "key": "scriptOn:<名> / scriptOff:<名>",
+      "when": "脚本单独开关，优先级高于文件",
+      "hot": true
+    },
+    {
+      "fallback": "scripts/<名>.off / .on 文件",
+      "when": "DSH 侧写入的标记，仅在 prefs 无记录时生效",
+      "hot": true
+    },
+    {
+      "file": "off",
+      "when": "存在即停 JS 注入与命令下发",
       "hot": true
     },
     {
@@ -248,16 +265,6 @@
     {
       "dir": "abilities",
       "when": "abilities/<mode>.off 单独关掉某个模式",
-      "hot": true
-    },
-    {
-      "dir": "scripts",
-      "when": "scripts/*.js 多脚本，<名>.js.off 停用",
-      "hot": true
-    },
-    {
-      "file": "cmd.json",
-      "when": "一次性下发命令 {ts, js}",
       "hot": true
     }
   ],

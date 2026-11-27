@@ -9,7 +9,7 @@
 
 DSH 读完这个文件就知道全部接口，不需要你解释任何细节。
 
-> **路径说明**：控制目录固定为 `/sdcard/DSHxpandh/`，不存在时模块会自动创建；该位置不可用时退回 `/sdcard/Download/DSHxpandh/`。实际路径以 App「设置 → 文件」页显示的为准。
+> **路径说明**：控制目录固定为 `/sdcard/DSHxpandh/`，不存在时模块会自动创建。旧的 `/sdcard/Download/DSHxpandh/` 已废弃（两个目录并存会让模块和 DSH 各写一边，出现「刚写的文件读不到」）。实际路径以 App「设置 → 文件」页显示的为准。
 
 > ## ⚠️ 装完或改完插件：重启一次引擎
 >
@@ -55,7 +55,7 @@ dsh plugin --profile web add /sdcard/DSHxpandh/dsh-plugin
 
 ```bash
 cp /sdcard/DSHxpandh/recipes/cipher-log.json \
-   /sdcard/Download/DSHxpandh/<目标包名>.json
+   /sdcard/DSHxpandh/user/<目标包名>.json
 ```
 
 然后**重启目标 App**。

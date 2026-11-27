@@ -28,7 +28,9 @@ public class DshxpandhProvider extends ContentProvider {
      * provider 跑在模块 App 进程，这里一旦触发它的静态初始化就可能 ClassNotFound。
      */
     static String ctrlRoot() {
-        String[] cands = { "/sdcard/DSHxpandh", "/sdcard/Download/DSHxpandh" };
+        // 只认 /sdcard/DSHxpandh 一个目录。旧候选 /sdcard/Download/DSHxpandh 已废弃：
+        // 两个目录并存时，模块和 DSH 插件可能各写一边，表现为「刚写的文件读不到」。
+        String[] cands = { "/sdcard/DSHxpandh" };
         for (String c : cands) {
             try {
                 java.io.File d = new java.io.File(c);
@@ -73,7 +75,21 @@ public class DshxpandhProvider extends ContentProvider {
             if ("getBool".equals(method)) {
                 out.putBoolean("v", p.getBoolean(arg == null ? "" : arg, false));
             } else if ("getStr".equals(method)) {
-                out.putString("v", p.getString(arg == null ? "" : arg, ""));
+                String k = arg == null ? "" : arg;
+                // 不能直接 p.getString(k)：同一个 key 存的是 boolean 时它会抛
+                // ClassCastException（不是返回默认值），异常被外层 catch 吃掉后
+                // Bundle 里什么都没写，调用方收到 Bundle[{}] —— 看起来像「键不存在」。
+                // 正确做法：先看它是哪种类型，再按类型取。
+                String s2 = "";
+                try {
+                    Object raw = p.getAll().get(k);
+                    if (raw instanceof String) s2 = (String) raw;
+                    else if (raw instanceof Boolean) s2 = ((Boolean) raw).booleanValue() ? "1" : "0";
+                    else if (raw instanceof Integer) s2 = String.valueOf(((Integer) raw).intValue());
+                    else if (raw instanceof Long) s2 = String.valueOf(((Long) raw).longValue());
+                    else if (raw instanceof Float) s2 = String.valueOf(((Float) raw).floatValue());
+                } catch (Throwable t2) { }
+                out.putString("v", s2);
             } else if ("has".equals(method)) {
                 out.putBoolean("v", p.contains(arg == null ? "" : arg));
             } else if ("getCmd".equals(method)) {
@@ -108,6 +124,18 @@ public class DshxpandhProvider extends ContentProvider {
                 SharedPreferences.Editor ed = p.edit();
                 if (val.length() == 0 || "__clear__".equals(val)) ed.remove("cmd");
                 else ed.putString("cmd", val);
+                out.putBoolean("ok", ed.commit());
+            } else if ("setStr".equals(method)) {
+                // 通用写开关：DSH 插件（proot 内）要把「脚本停用/恢复」「隐身」这类状态写进来，
+                // 只有 provider 这条路能碰到 App 私有 prefs —— 写 /sdcard 文件目标进程常读不到。
+                // 参数格式 "key:value"；value 为 "0" 时写 "0"（表示明确关闭），不是删除。
+                String a = arg == null ? "" : arg;
+                int c = a.indexOf(':');
+                if (c <= 0) { out.putBoolean("ok", false); return out; }
+                String k = a.substring(0, c);
+                String v = a.substring(c + 1);
+                SharedPreferences.Editor ed = p.edit();
+                ed.putString(k, v);
                 out.putBoolean("ok", ed.commit());
             } else if ("getScripts".equals(method)) {
                 // 一次 IPC 把启用着的脚本全带走，省得每个脚本调一次

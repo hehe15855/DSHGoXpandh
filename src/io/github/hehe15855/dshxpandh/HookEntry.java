@@ -38,14 +38,15 @@ public class HookEntry {
     private static final String SELF = "io.github.hehe15855.dshxpandh";
     /** 调试日志开关：从 prefs 的 debugLog 读，隐身开着也能输出日志 */
     private static boolean DEBUG_LOG = false;
-    private static final String VER = "v162";
+    private static final String VER = "v167";
     // 控制目录：统一为 /sdcard/DSHxpandh（单一目录，不做多候选）
     private static final String ROOT = pickRoot();
     private static String pickRoot() {
         java.io.File gen = new java.io.File("/sdcard/DSHxpandh");
         if (!gen.exists()) { try { gen.mkdirs(); } catch (Throwable t) {} }
-        if (gen.isDirectory()) return gen.getPath();
-        return "/sdcard/Download/DSHxpandh";
+        // 建不出来也返回统一路径，不要回落到 /sdcard/Download/DSHxpandh：
+        // 两个目录并存时读写会分叉，查问题时最容易被误导成「模块没写文件」。
+        return gen.getPath();
     }
     private static final char[] HEX = "0123456789abcdef".toCharArray();
     // 全局注入开关：这两个文件任一存在即停掉 JS 注入（删掉即恢复）
@@ -280,6 +281,20 @@ public class HookEntry {
      * getCmd 的回落顺序在 DshxpandhProvider 里：先 prefs 的 "cmd"，再控制目录的
      * 共享命令文件 c-<包名hash>.bin。两条都不需要 root，所以免 root 环境（LSPatch 等）也照样能下发。
      */
+    /** 走 provider 取一个布尔开关。目标进程拿不到 /sdcard 文件，但 Binder 调用可用。 */
+    private static Boolean prefsCallBool(String method, String arg) {
+        try {
+            android.content.Context ctx = XpBridge.currentApplication();
+            if (ctx == null) return null;
+            android.os.Bundle b = ctx.getContentResolver().call(
+                    android.net.Uri.parse("content://" + DshxpandhProvider.AUTHORITY),
+                    method, arg, null);
+            if (b == null) return null;
+            if (!b.containsKey("v")) return null;
+            return Boolean.valueOf(b.getBoolean("v"));
+        } catch (Throwable t) { return null; }
+    }
+
     private static String prefsCallStr(String method, String arg) {
         try {
             android.content.Context ctx = XpBridge.currentApplication();
@@ -385,15 +400,26 @@ public class HookEntry {
             //                             所以模块自己点开关时靠下面的 prefs，不靠这两个文件）
             //   prefs scriptOn/scriptOff —— 模块设置页点的开关
             // .off / .on 优先级最高：它们代表「最近一次由 DSH 下的明确指令」。
+            // 优先级：App 内部（prefs，经 provider）> 目录标记文件。
+            // 反过来（文件优先）会让 DSH 侧的旧标记压住用户在界面上刚点的开关。
+            String on = prefsCallStr("getStr", "scriptOn:" + name);
+            if (on == null) on = xspStr("scriptOn:" + name);
+            if (on == null) on = prefsStr("scriptOn:" + name);
+            if ("1".equals(on)) { LAST_KNOWN.put("scriptOff:" + name, Boolean.FALSE); return false; }
+            String off = prefsCallStr("getStr", "scriptOff:" + name);
+            if (off == null) off = xspStr("scriptOff:" + name);
+            if (off == null) off = prefsStr("scriptOff:" + name);
+            if ("1".equals(off)) { LAST_KNOWN.put("scriptOff:" + name, Boolean.TRUE); return true; }
+
+            // 兜底：目录标记文件（DSH 侧 dshxpandh_script off/on 写的；模块自己不再依赖它）
             if (new File(SCRIPTS_DIR, name + ".off").exists()) return true;
             if (new File(SCRIPTS_DIR, name + ".on").exists()) return false;
 
-            String on = xspStr("scriptOn:" + name);
-            if (on == null) on = prefsStr("scriptOn:" + name);
-            if ("1".equals(on)) return false;
-            String off = xspStr("scriptOff:" + name);
-            if (off == null) off = prefsStr("scriptOff:" + name);
-            if ("1".equals(off)) return true;
+            // 二分记录都没读到：先用本进程上次的真实结果，别再凭空判一次。
+            // 否则 provider 偶发失败时，同一个脚本会在「跑」与「不跑」之间反复横跳。
+            String k = "scriptOff:" + name;
+            Boolean last = LAST_KNOWN.get(k);
+            if (last != null) return last.booleanValue();
 
             // 都没有记录：用户自己丢进 scripts/ 的脚本默认开（放进去就是想用），
             // 内置脚本默认关（装了模块不自动改别人的页面）。
@@ -424,12 +450,72 @@ public class HookEntry {
         }
     }
 
+    /** 本进程上次成功读到的隐身状态。null = 还没读到过。
+     *  用途：provider 偶发失败时别一把梭默认「开」，先尊重上次真实值。 */
+    private static volatile Boolean LAST_KNOWN_STEALTH = null;
+
+    /** 每个开关上次读到的真实值，供 provider 偶发失败时兜底。key 用开关名。 */
+    private static final java.util.Map<String, Boolean> LAST_KNOWN = new java.util.concurrent.ConcurrentHashMap<String, Boolean>();
+
+    /**
+     * 统一读一个开关：
+     *   ① 先问 App 内部（provider getStr），拿到 1/0 就用
+     *   ② 再问 provider getBool（老版本 App 存的是布尔）
+     *   ③ 都不行就用本进程上次读到的真实值，别一把梭默认值
+     *   ④ 连上次值都没有，才用调用方给的 defaultVal
+     * 文件只作最后兜底，不再优先 —— 目标进程常读不到 /sdcard，那是最不可靠的一层。
+     */
+    private static boolean switchOn(String key, String filePath, boolean defaultVal) {
+        try {
+            String sv = prefsCallStr("getStr", key);
+            if ("1".equals(sv)) { LAST_KNOWN.put(key, Boolean.TRUE); return true; }
+            if ("0".equals(sv)) { LAST_KNOWN.put(key, Boolean.FALSE); return false; }
+        } catch (Throwable t) { }
+        try {
+            Boolean bv = prefsCallBool("getBool", key);
+            if (bv != null) { LAST_KNOWN.put(key, bv); return bv.booleanValue(); }
+        } catch (Throwable t) { }
+        Boolean last = LAST_KNOWN.get(key);
+        if (last != null) return last.booleanValue();
+        if (filePath != null) {
+            try { if (new File(filePath).exists()) { LAST_KNOWN.put(key, Boolean.TRUE); return true; } } catch (Throwable t) { }
+        }
+        return defaultVal;
+    }
     private static boolean stealthOn() {
         // 调试日志开关走文件：控制目录里有 debug 这个文件就输出日志。
         // 不走 prefs —— XSharedPreferences 在目标进程读不到（apexdata 路径），provider 也可能失败。
         try {
             DEBUG_LOG = "1".equals(prefsStr("debug"));   // 只认 prefs：文件那套目标进程读不到，会两边不一致
         } catch (Throwable t) { }
+        // 文件开关最优先：界面开关会同步写 stealth / nostealth 两个文件。
+        // 原因：XSharedPreferences 在目标进程常返回 null（xsp stealth v=null），
+        // 一旦落到兜底就恒为「开」，界面显示关、实际却在隐身 —— 用户看到的和跑起来的对不上。
+        try {
+            // 开关状态统一由「模块 App 内部」提供，走 provider(Binder) 问，不再依赖 /sdcard 标记文件。
+            // 文件那套有三个硬伤：① 目标进程常读不到（属主/权限）② 卸载重装会丢 ③ 两边可能各写一边。
+            // provider 是同一台机器上的 Binder 调用，不受文件权限影响，也不会因为清缓存而消失。
+            // 主路径：字符串 "1"/"0"（界面与插件都写这个，provider 会把老布尔值转成 1/0）
+            try {
+                String sv = prefsCallStr("getStr", "stealth");
+                if ("1".equals(sv)) { LAST_KNOWN_STEALTH = Boolean.TRUE; return true; }
+                if ("0".equals(sv)) { LAST_KNOWN_STEALTH = Boolean.FALSE; return false; }
+            } catch (Throwable t) { }
+            // 次选：万一 provider 只回布尔（老版本 App），再问一次
+            try {
+                Boolean bv = prefsCallBool("getBool", "stealth");
+                if (bv != null) { LAST_KNOWN_STEALTH = bv; return bv.booleanValue(); }
+            } catch (Throwable t) { }
+        } catch (Throwable t) { }
+        // 文件兜底：界面开关会把状态同步写 stealth / nostealth 两个文件。
+        // 这一层之前被我改漏了 —— provider 拿不到时直接落到「默认开」，
+        // 于是用户关掉隐身也不生效（2026-11-27 实测：nostealth 文件明明在，日志还是 true）。
+        try {
+            if (new File(ROOT + "/nostealth").exists()) { LAST_KNOWN_STEALTH = Boolean.FALSE; return false; }
+            if (new File(ROOT + "/stealth").exists()) { LAST_KNOWN_STEALTH = Boolean.TRUE; return true; }
+        } catch (Throwable t) { }
+        // 本进程上次读到的真实值：优先级在文件之后、默认值之前
+        if (LAST_KNOWN_STEALTH != null) return LAST_KNOWN_STEALTH.booleanValue();
         Boolean xv = xspBool("stealth");
         if (xv != null) return xv.booleanValue();
         try {
@@ -507,10 +593,9 @@ public class HookEntry {
             } catch (Throwable t) { emit(pkg, "probe-err " + t.getClass().getSimpleName()); }
             File f = findAppCfg(pkg);
             if (f != null) { String t = readAll(f); if (t != null && t.length() > 0) src = "#ext:" + t; }
-            // 用户自己的配置：/sdcard/Download/DSHxpandh/<包名>.json，优先于内置
+            // 用户自己的配置：/sdcard/DSHxpandh/<包名>.json，优先于内置
             if (src == null) {
                 String[] mine = {
-                    "/sdcard/Download/DSHxpandh/" + pkg + ".json",
                     "/sdcard/DSHxpandh/" + pkg + ".json"
                 };
                 for (String mp : mine) {
@@ -531,9 +616,7 @@ public class HookEntry {
             if (src == null) {
                 String[] globals = {
                     ROOT + "/config.json",
-                    "/sdcard/DSHxpandh/config.json",
-                    "/sdcard/Download/DSHxpandh.json",
-                    "/data/local/tmp/dshxpandh.json"
+                    "/sdcard/DSHxpandh/config.json"
                 };
                 for (String gp : globals) {
                     try {
@@ -865,7 +948,7 @@ public class HookEntry {
                     try {
                         if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
                         String n = (String) p.getArgs()[0];
-                        if (isStealthClass(n) && !new File(ROOT + "/classhide.off").exists()) p.setThrowable(new ClassNotFoundException(n));
+                        if (isStealthClass(n) && !switchOn("classhide", ROOT + "/classhide.off", false)) p.setThrowable(new ClassNotFoundException(n));
                     } catch (Throwable t) { /* 隐身逻辑异常绝不能崩目标 App */ }
                 }
             });
@@ -878,7 +961,7 @@ public class HookEntry {
                         if (SELF.equals(pkg)) return;
                         if (p.getArgs() == null || p.getArgs().length == 0 || !(p.getArgs()[0] instanceof String)) return;
                         String n = (String) p.getArgs()[0];
-                        if (isStealthClass(n) && !new File(ROOT + "/classhide.off").exists()) p.setThrowable(new ClassNotFoundException(n));
+                        if (isStealthClass(n) && !switchOn("classhide", ROOT + "/classhide.off", false)) p.setThrowable(new ClassNotFoundException(n));
                     } catch (Throwable t) { /* 隐身逻辑异常绝不能崩目标 App */ }
                 }
             });
@@ -1011,7 +1094,7 @@ public class HookEntry {
 
             // 敏感目录的列表：列出来就看见模块的目录名
             try {
-                if (new File(ROOT + "/stealth-file.off").exists()) throw new RuntimeException("skip");
+                if (switchOn("stealthfile", ROOT + "/stealth-file.off", false)) throw new RuntimeException("skip");
                 Class<?> fc2 = Class.forName("java.io.File");
                 XpBridge.hookAllMethods(fc2, "listFiles", new XpCallback() {
                     @Override protected void afterHookedMethod(XpParam p) {
@@ -1103,7 +1186,7 @@ public class HookEntry {
 
             // root / magisk 探测：拦 su 与 magisk 相关命令（默认关闭，见 stealth-exec 标记）
             try {
-                if (new File(ROOT + "/stealth-exec.off").exists()) throw new RuntimeException("skip");
+                if (switchOn("stelexec", ROOT + "/stealth-exec.off", false)) throw new RuntimeException("skip");
                 Class<?> rt = Class.forName("java.lang.Runtime");
                 XpBridge.hookAllMethods(rt, "exec", new XpCallback() {
                     @Override protected void beforeHookedMethod(XpParam p) {
@@ -1143,7 +1226,7 @@ public class HookEntry {
 
             // 痕迹路径：exists / isFile / isDirectory 一律回答「没有」（开关 stealth-file）
             try {
-                if (new File(ROOT + "/stealth-file.off").exists()) throw new RuntimeException("skip");
+                if (switchOn("stealthfile", ROOT + "/stealth-file.off", false)) throw new RuntimeException("skip");
                 Class<?> fc = Class.forName("java.io.File");
                 XpCallback fh = new XpCallback() {
                     @Override protected void afterHookedMethod(XpParam p) {
@@ -1659,7 +1742,7 @@ public class HookEntry {
                         // onDraw 不常触发，靠它保活不够；3 秒兜底一次，用 LAST_DRAWN_AW 打真页面
                         if (nowMs - lastForce > 3000L) { lastForce = nowMs; lastScripts.clear(); }
                         // 全局开关：控制目录里出现 off 文件就整段跳过，删掉即恢复
-                        if (new File(OFF_SWITCH).exists() || new File(OFF_SWITCH_ALT).exists()) {
+                        if (switchOn("off", OFF_SWITCH, false) || new File(OFF_SWITCH_ALT).exists()) {
                             // 关键：必须把 CURRENT_JS 置空。否则 onDraw 仍会拿旧值往页面贴，
                             // 表现就是「关掉脚本后效果还残留」。刷新页面后才真正恢复。
                             CURRENT_JS = null;
@@ -1669,16 +1752,20 @@ public class HookEntry {
                         try {
                             java.util.Map<String, String> all = new java.util.LinkedHashMap<String, String>();
                             all.putAll(builtinScripts());
-                            File sd = new File(SCRIPTS_DIR);
-                            File[] fs = sd.listFiles();
-                            if (fs != null) {
-                                for (File f : fs) {
-                                    String n = f.getName();
-                                    if (!n.endsWith(".js")) continue;
-                                    String code = readAll(f);
-                                    if (code != null && code.length() > 0) all.put(n, code);
-                                }
-                            }
+                            // 用户导入的脚本存在模块 prefs 里（界面「导入脚本」写的就是它）。
+                            // scriptsFromPrefs 原本写好了却没人调，表现为「导入的脚本从不生效」。
+                            try {
+                                java.util.Map<String, String> fromPrefs = scriptsFromPrefs();
+                                if (fromPrefs != null && !fromPrefs.isEmpty()) all.putAll(fromPrefs);
+                            } catch (Throwable tp) { }
+                            // 目录那份优先级**最低**：只在 prefs 与内置都没有同名脚本时才补进来。
+                            // 原因：/sdcard 上的文件普通 App 常常读不到（属主是 DSH），
+                            // 而目录里放的往往是旧副本；若让它覆盖 prefs，界面导入的新版就永远用不上。
+                            // 2026-11-27 实测：目录 kb-block.js 1498 字节，prefs 里是 1231 字节，
+                            // 实际注入的一直是目录那份，改界面里的版本却不见效。
+                            // 不扫 /sdcard/DSHxpandh/scripts/：丢个 .js 进去就自动出现、自动生效，
+                            // 用户明确要求关掉这条路 —— 脚本只能通过界面「加入脚本」导入（写进 prefs）。
+                            // 目录只剩一个作用：手动点开关时同步 .off/.on 标记。
                             // 先拼一份「所有启用脚本」给 onDraw 重绘用。
                             // 原来 CURRENT_JS 只有一个槽，9 个脚本轮流覆盖，最后只剩一个，
                             // 页面一重渲染其他脚本的效果就被冲掉（反色、暗色都是这么丢的）。
@@ -1687,7 +1774,10 @@ public class HookEntry {
                                 if (isScriptOff(e0.getKey())) continue;
                                 String c0 = e0.getValue();
                                 if (c0 == null || c0.length() == 0) continue;
-                                allJs.append(c0).append("\n;\n");
+                                // 每个脚本各包一层 IIFE + try/catch：一个脚本写坏了（语法错或运行抛错）
+                                // 不会把整份 JS 带崩、连带内置脚本一起失效。
+                                // 直接 append(c0) 时，任何一处 SyntaxError 会让整段 evaluateJavascript 全废。
+                                allJs.append("try{(function(){").append(c0).append("\n})()}catch(e){}\n;\n");
                             }
                             CURRENT_JS = allJs.length() > 0 ? allJs.toString() : null;
                             for (java.util.Map.Entry<String, String> e : all.entrySet()) {

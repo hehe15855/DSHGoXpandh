@@ -27,10 +27,8 @@ const RELEASE = 'https://github.com/hehe15855/DSHGoXpandh/releases/latest'
 
 // 控制目录：统一为 /sdcard/DSHxpandh（单一来源，DSH-Output 旧候选已废弃）
 function pickRoot() {
-  const cands = ['/sdcard/DSHxpandh', '/sdcard/Download/DSHxpandh']
-  for (const c of cands) {
-    try { if (fs.existsSync(c)) return c } catch (e) {}
-  }
+  // 单一目录：/sdcard/DSHxpandh。旧候选 /sdcard/Download/DSHxpandh 已废弃——
+  // 两个目录并存时模块和插件会各写一边，出现「刚写的文件对方读不到」这种假故障。
   try { fs.mkdirSync('/sdcard/DSHxpandh', { recursive: true }) } catch (e) {}
   return '/sdcard/DSHxpandh'
 }
@@ -52,19 +50,39 @@ function sh(cmd, timeoutMs) {
 // 为什么要有这个：免 root 时命令只能靠共享文件传递，文件名虽是哈希、内容是混淆的，
 // 但东西还在盘上。一旦有了 root（改走目标私有目录）又开着隐身，这些残留就该消失。
 let lastScrub = 0
-async function maybeScrub() {
+// 上一轮心跳时模块进程是否活着。用来识别「活 → 死」这个跳变，只在跳变时清一次，
+// 避免模块本来就没装的时候每轮都白跑一遍清理。
+let lastModuleAlive = null
+// 模块进程还活着吗。psh 不可用时返回 null（不知道），别把「不知道」当成「死了」。
+async function moduleAlive() {
+  try {
+    const r = await sh('psh "pidof ' + PKG + '" 2>/dev/null', 8000)
+    const out = String(r.out || '').trim()
+    if (r.code !== 0 && out.length === 0) return null
+    return out.length > 0
+  } catch (e) { return null }
+}
+
+async function maybeScrub(force) {
   const now = Date.now()
-  if (now - lastScrub < 60000) return 0
+  // force=true 时跳过节流：进程刚死要立刻清，不能等下一个 60 秒窗口。
+  if (!force && now - lastScrub < 60000) return 0
   lastScrub = now
-  if (!fs.existsSync(ROOT + '/stealth')) return 0
+  // 隐身状态以 App 内部为准（provider），文件只作兜底 —— 与 HookEntry 的判断顺序保持一致。
+  // 以前只看文件：界面关掉隐身后文件可能还在（或反之），清理就会按错的状态跑。
+  const stealthOn = await getSwitch('stealth', ROOT + '/stealth')
+  if (!stealthOn) return 0
   const st = await probe(false)
   if (!st.root) return 0
   let n = 0
   try {
     for (const name of fs.readdirSync(ROOT)) {
       const isCmd = (name.slice(0, 2) === 'c-' && name.slice(-4) === '.bin') || (name.slice(0, 4) === 'cmd-' && name.slice(-5) === '.json')
-      const isStray = name.startsWith('probe-') || name.startsWith('alive-')
-      if (!isCmd && !isStray) continue
+      // 只清 probe-*（一次性探针）；alive-* 不能碰 —— 那是模块告诉 DSH「哪个 App 被注入过」的标记，
+      // 删了 DSH 就再也看不到注入状态，会误判成「模块没工作」。
+      const isStray = name.startsWith('probe-')
+      const isDoc = name.endsWith('.md') || name === 'dshxpandh-clean.sh'
+      if (!isCmd && !isStray && !isDoc) continue
       if (!isCmd && name.indexOf(PKG) >= 0) continue
       try { fs.unlinkSync(ROOT + '/' + name); n++ } catch (e) {}
     }
@@ -89,8 +107,41 @@ function markHit(tag) {
 function beat() {
   try {
     fs.mkdirSync(ROOT, { recursive: true })
-    // 只写时间戳：模块侧只用第一行；不带任何可识别字串，被扫到也只是个数字文件。
-    fs.writeFileSync(ROOT + '/dsh-alive', String(Date.now()) + '\n', 'utf8')
+    // 心跳只写一个毫秒时间戳（模块侧只看第一行），不带任何可识别字串。
+    // 用 0666 创建模式让属主跟随当前用户；**不在这里 chmod** ——
+    // 文件被 root 写过之后 chmod/unlink 都动不了，硬来会让心跳彻底断掉（2026-11-27 踩过）。
+    // 主文件写不进就换个带 pid 的备名，模块侧会挑最新的那个。
+    const stamp = String(Date.now()) + '\n'
+    const primary = ROOT + '/dsh-alive'
+    let written = false
+    let writeErr = null
+    try {
+      fs.writeFileSync(primary, stamp, { encoding: 'utf8', mode: 438 })   // 438 = 0o666
+      written = true
+    } catch (e) { writeErr = e }
+    if (!written) {
+      try { fs.writeFileSync(ROOT + '/dsh-alive-' + process.pid, stamp, { encoding: 'utf8', mode: 438 }) } catch (e2) { writeErr = e2 }
+    }
+    // 排查线索：写失败时留一条（以前只在最外层 catch 写，正常跑起来什么都看不到）。
+    // 成功不写，避免每 60 秒刷一行噪音；失败才记，翻目录就知道哪一轮断过。
+    if (writeErr) {
+      try {
+        fs.writeFileSync(ROOT + '/beat-err',
+          Date.now() + ' heartbeat-write-failed ' + String((writeErr && writeErr.message) || writeErr) + '\n',
+          { encoding: 'utf8', mode: 438 })
+      } catch (e3) { }
+    }
+    // 模块被杀（force-stop / OOM 都是 SIGKILL）时 JVM 的 shutdown hook 不会执行，
+    // 所以「进程结束就清一遍」只能由这边来：每轮心跳探一次模块进程，
+    // 发现它从活变死就立刻强制清一次（force 跳过节流）。
+    moduleAlive().then(function (alive) {
+      if (alive === true) { lastModuleAlive = true; return }
+      if (alive === false && lastModuleAlive === true) {
+        lastModuleAlive = false
+        try { console.warn('[local-dshxpandh] 模块进程已结束，强制执行一次清理') } catch (e) {}
+        return maybeScrub(true)
+      }
+    }).catch(function () {})
     maybeScrub().catch(function () {})
   } catch (e) {
     // 以前这里直接吞掉：心跳写失败等于失联，却留不下任何线索。
@@ -119,6 +170,39 @@ async function probe(force) {
   cache = { root: root, installed: installed, version: version, dir: ROOT }
   cacheAt = now
   return cache
+}
+
+// 开关状态统一写进「模块 App 内部」（prefs），不再只靠 /sdcard 标记文件。
+// 通过 psh 调模块的 ContentProvider —— 这是唯一能从 proot 碰到 App 私有数据的方式，
+// 且不受 /sdcard 属主/权限影响（文件和 prefs 常常对不上就是这个原因）。
+// 返回 true=写成功。失败不抛，让调用方继续走文件兜底。
+function setSwitch(key, val) {
+  return new Promise(function (resolve) {
+    try {
+      const v = String(val).replace(/'/g, '')
+      const k = String(key).replace(/'/g, '')
+      const uri = 'content://io.github.hehe15855.dshxpandh.cfg'
+      execFile('psh', ['/system/bin/content call --uri ' + uri + " --method setStr --arg '" + k + ':' + v + "'"], { timeout: 15000 }, function (err, stdout) {
+        resolve(!err && String(stdout || '').indexOf('Result') >= 0)
+      })
+    } catch (e) { resolve(false) }
+  })
+}
+
+// 读开关：优先问 App 内部，失败再看文件。
+function getSwitch(key, filePath) {
+  return new Promise(function (resolve) {
+    try {
+      const uri = 'content://io.github.hehe15855.dshxpandh.cfg'
+      execFile('psh', ['/system/bin/content call --uri ' + uri + " --method getStr --arg '" + key + "'"], { timeout: 15000 }, function (err, stdout) {
+        const out = String(stdout || '')
+        if (!err && out.indexOf('v=1') >= 0) return resolve(true)
+        if (!err && out.indexOf('v=0') >= 0) return resolve(false)
+        // App 那边没有记录：退回文件判断
+        resolve(filePath ? fs.existsSync(filePath) : false)
+      })
+    } catch (e) { resolve(filePath ? fs.existsSync(filePath) : false) }
+  })
 }
 
 function scripts() {
@@ -234,7 +318,7 @@ export function apply(ctx) {
 
   safeRegister({
     name: 'dshxpandh_status',
-    description: '查对接状态：模块版本、root 可用性、控制目录、注入总开关、脚本数。做任何 DSHxpandh 操作前先查，或用户问「连没连 / 能不能用」。',
+    description: '查对接状态：模块版本、root 可用性、控制目录、注入总开关、脚本数、隐身与自动清理是否在跑。开关状态以「模块 App 内部（prefs）」为准，经 provider 读取，不受 /sdcard 权限影响；文件只作兜底。做任何 DSHxpandh 操作前先查，或用户问「连没连 / 能不能用 / 有没有留痕」。',
     parameters: { type: 'object', properties: {} },
     output: textOut(),
     async execute() {
@@ -246,6 +330,10 @@ export function apply(ctx) {
       lines.push('注入总开关: ' + (fs.existsSync(s.dir + '/off') ? '已关' : '开'))
       const ss = scripts()
       lines.push('脚本层: ' + ss.length + ' 个' + (ss.length ? ' (' + ss.map(function (x) { return x.name + (x.off ? '[停]' : '') }).join(', ') + ')' : ''))
+      // 隐身 + root 时，插件会在模块进程结束时清残留；这两项一起说清，
+      // 否则用户看到「共享文件没了」会以为是出了故障。
+      const stealthOn = await getSwitch('stealth', s.dir + '/stealth')
+      lines.push('隐身: ' + (stealthOn ? '开' : '关') + (stealthOn && s.root ? '（残留会被自动清理）' : ''))
       return lines.join('\n')
     }
   })
@@ -290,16 +378,18 @@ export function apply(ctx) {
       }
       if (act === 'off') {
         if (!fs.existsSync(full)) throw new Error('不存在: ' + nm)
+        // 主写 App 内部（目标进程经 provider 读），文件同步一份给外部排查用
+        const okSv = await setSwitch('scriptOff:' + nm, '1')
         fs.writeFileSync(full + '.off', String(Date.now()), 'utf8')
         try { if (fs.existsSync(full + '.on')) fs.unlinkSync(full + '.on') } catch (e) {}
-        return '已停用 ' + nm
+        return '已停用 ' + nm + (okSv ? '（已同步到 App）' : '（仅文件，App 未响应）')
       }
       if (act === 'on') {
         if (fs.existsSync(full + '.off')) fs.unlinkSync(full + '.off')
-        // 还要写 .on 标记：模块的 isScriptOff 先看文件、再看 prefs，
-        // 光删 .off 会被模块设置页留下的 scriptOff 记录压回去（表现为「说恢复了却不跑」）。
+        // 关键：把 App 内的 scriptOff 也清掉，否则那边还记着「停用」，说恢复了却不跑
+        const okSv = await setSwitch('scriptOff:' + nm, '0')
         try { fs.writeFileSync(full + '.on', String(Date.now()), 'utf8') } catch (e) {}
-        return '已恢复 ' + nm
+        return '已恢复 ' + nm + (okSv ? '（已同步到 App）' : '（仅文件，App 未响应）')
       }
       throw new Error('action 只能是 list/add/remove/off/on')
     }
@@ -307,7 +397,7 @@ export function apply(ctx) {
 
   safeRegister({
     name: 'dshxpandh_inject',
-    description: '命令层：只对指定 App 下发一次性 JS。有 root 写该 App 私有目录，隐身开着也能用；没 root 写控制目录共享文件，隐身开着会被拒绝。要全部 App 生效用 dshxpandh_script。',
+    description: '命令层：只对指定 App 下发一次性 JS。有 root 写该 App 私有目录，隐身开着也能用；没 root 写控制目录共享文件，隐身开着会被拒绝。注意：拿到 root 且隐身开启时，这些共享文件会被自动清掉（那时命令已改走私有目录，不会断）。要全部 App 生效用 dshxpandh_script。',
     parameters: {
       type: 'object',
       properties: {
